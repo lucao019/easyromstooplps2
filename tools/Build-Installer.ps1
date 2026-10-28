@@ -107,7 +107,9 @@ exit /b 1
 
 "@
 
-    $out = $header + ($lines -join "`r`n") + "`r`n"
+    # CRLF em tudo: o cmd.exe depende disso, inclusive quando o arquivo é baixado
+    $out = (($header + ($lines -join "`n")) -split "`r?`n") -join "`r`n"
+    $out = $out.TrimEnd() + "`r`n"
     $dir = Split-Path -Parent $OutFile
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
 
