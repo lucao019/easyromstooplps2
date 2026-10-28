@@ -1,0 +1,22 @@
+# Normalização de fim de linha
+* text=auto
+
+# PowerShell precisa de CRLF no Windows PowerShell 5.1
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.psd1  text eol=crlf
+
+# Documentação e configs em LF
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+LICENSE text eol=lf
+
+# Binários
+*.iso binary
+*.zso binary
+*.chd binary
+*.png binary
+*.jpg binary

@@ -1,0 +1,35 @@
+# Imagens de jogo — nunca versionar
+*.iso
+*.ISO
+*.bin
+*.img
+*.zso
+*.ZSO
+*.chd
+*.cso
+*.gz
+*.zip
+*.rar
+*.7z
+*.tar
+
+# Pedaços do formato ul.* e índice gerado em runtime
+ul.*
+!ul.cfg.example
+*.part
+
+# Lixo do Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Ferramentas / editores
+.vscode/
+.idea/
+*.swp
+*~
+
+# PowerShell
+*.tmp
