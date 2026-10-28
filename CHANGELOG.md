@@ -4,6 +4,39 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.2.1] — 2026-10-28
+
+### Corrigido
+
+- **Clicar em uma aba/unidade fechava o programa.** Os handlers usavam
+  `param($s, $e)` e, como o PowerShell não diferencia maiúsculas de minúsculas,
+  `$s` sobrescrevia `$S` (o estado do aplicativo). O próximo acesso a `$S.Mode`
+  estourava e a janela morria. Todos os 12 handlers agora usam `$sender`.
+- **O ✕ de um jogo não removia nada.** A ação da confirmação era um scriptblock
+  criado dentro de `Confirm-Remove`; ao ser chamado depois, `$Game` já não existia
+  (virava `$null`) e a remoção falhava com "Serial vazio". O mesmo valia para
+  "substituir jogos existentes" (INSTALAR) e "sobrescrever arquivo" (ISO).
+  Agora os três usam `GetNewClosure()`.
+- **Avisos (toasts) nunca sumiam sozinhos.** O timer de 6 s também perdia `$border`
+  ao rodar fora da função; o aviso ficava na tela para sempre. Agora ele fecha
+  sozinho e o ✕ funciona.
+- **Erro dentro de um handler não fecha mais a janela**: uma rede de segurança
+  (`Dispatcher.UnhandledException`) registra em `%TEMP%\EasyRomsToOPL-error.log`,
+  mostra um aviso e mantém o programa aberto.
+- Clique em CONFIRMAR agora trata falha da ação (loga e avisa) em vez de deixar
+  a exceção subir.
+
+### Adicionado
+
+- **`tests\Test-GuiUi.ps1`** — 92 asserções que abrem a janela de verdade e clicam
+  em cada controle: chips de unidade, modos, INSTALAR, SIMULAR, LIMPAR LISTA,
+  RECARREGAR, COPIAR, ✕ dos arquivos, ✕ dos jogos (cancelar / ESC / confirmar),
+  ISO, minimizar/maximizar/fechar, mais uma varredura que clica no que sobrou.
+  Usa uma unidade virtual (`subst`) para nunca gravar em disco real e falha se
+  qualquer handler lançar exceção.
+- `Show-AddFilesDialog`, `Add-DroppedFiles` e `Start-ExportTo`: partes sem diálogo
+  nativo, para o teste conseguir exercitar o mesmo código.
+
 ## [1.2.0] — 2026-10-28
 
 ### Adicionado
@@ -85,6 +118,7 @@ um PS2 com FreeMcBoot/OPL — ver [docs/CASE-STUDY.md](docs/CASE-STUDY.md).
   Medalha de Honra, ULTIMO BOMBA, God of War e Crash Twinsanity).
 - God of War (DVD9, 7,94 GB) instalado em 8 pedaços; soma conferida byte a byte.
 
+[1.2.1]: https://github.com/lucao019/easyromstooplps2/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/lucao019/easyromstooplps2/tree/v1.0.0

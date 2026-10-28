@@ -187,20 +187,23 @@ function Show-Toast {
 
     $border.Child = $grid
     [void]$ui.Toasts.Children.Add($border)
-    $S.Toasts.Add($border)
+    [void]$S.Toasts.Add($border)
 
+    # GetNewClosure: o handler roda depois que esta função terminou; sem isso
+    # $border seria $null e o aviso nunca sairia da tela.
     $timer = New-Object Windows.Threading.DispatcherTimer
     $timer.Interval = [TimeSpan]::FromSeconds(6)
     $timer.Add_Tick({
-        param($s, $e)
-        $s.Stop()
+        param($sender, $e)
+        $sender.Stop()
         if ($border.Parent) { [void]$ui.Toasts.Children.Remove($border) }
-    })
-    $timer.Tag = $border
+        [void]$S.Toasts.Remove($border)
+    }.GetNewClosure())
     $close.Add_MouseLeftButtonUp({
-        param($s, $e)
+        param($sender, $e)
         if ($border.Parent) { [void]$ui.Toasts.Children.Remove($border) }
-    })
+        [void]$S.Toasts.Remove($border)
+    }.GetNewClosure())
     $timer.Start()
 }
 
@@ -275,8 +278,8 @@ function Update-DriveChips {
         $chip.Content = ('{0}{1}: {2} GB' -f $(if ($d.Type -eq 'Removable') { '' } else { 'HD ' }), $d.Letter, [math]::Round($d.Free / 1GB, 0))
         $chip.ToolTip = ('{0} · {1} · {2} livre de {3}{4}' -f $d.Label, $d.Format, (Format-Size $d.Free), (Format-Size $d.Total), $(if ($d.Type -eq 'Removable') { '' } else { ' · unidade fixa' }))
         $chip.Add_Click({
-            param($s, $e)
-            $S.Drive = $s.Tag
+            param($sender, $e)
+            $S.Drive = $sender.Tag
             Update-DriveChips
             Update-Space
             Load-Games
@@ -456,8 +459,8 @@ function Render-Files {
         $del.HorizontalAlignment = 'Right'
         $del.Tag = $f
         $del.Add_MouseLeftButtonUp({
-            param($s, $e)
-            $S.Files.Remove($s.Tag) | Out-Null
+            param($sender, $e)
+            $S.Files.Remove($sender.Tag) | Out-Null
             Render-Files
         })
         [Windows.Controls.Grid]::SetColumn($del, 2)
@@ -465,6 +468,29 @@ function Render-Files {
 
         $border.Child = $grid
         [void]$ui.FilesPanel.Children.Add($border)
+    }
+}
+
+function Add-DroppedFiles {
+    <#
+        Chamado pelo evento de drop (e pelo teste). Aceita qualquer coisa que
+        venha do DataObject: caminhos, um caminho só, ou nada.
+    #>
+    param($Files)
+
+    foreach ($f in @($Files)) {
+        if (-not $f) { continue }
+        Add-IsoFile ([string]$f)
+    }
+}
+
+function Show-AddFilesDialog {
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title = 'Escolha as imagens de PS2'
+    $dlg.Filter = 'Imagens de PS2 (*.iso)|*.iso|Todos os arquivos (*.*)|*.*'
+    $dlg.Multiselect = $true
+    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        Add-DroppedFiles -Files $dlg.FileNames
     }
 }
 
@@ -572,7 +598,7 @@ function Load-Games {
             $b.ToolTip = 'Remontar os pedaços em um .iso único (PCSX2 / backup)'
             $b.Margin = New-Object Windows.Thickness(0, 0, 4, 0)
             $b.Tag = $g
-            $b.Add_Click({ param($s, $e) Start-Export $s.Tag })
+            $b.Add_Click({ param($sender, $e) Start-Export $sender.Tag })
             [void]$actions.Children.Add($b)
         }
 
@@ -583,12 +609,12 @@ function Load-Games {
         $d.BorderBrush = Br '#663333'
         $d.ToolTip = 'Remover do pendrive'
         $d.Tag = $g
-        $d.Add_Click({ param($s, $e) Confirm-Remove $s.Tag })
+        $d.Add_Click({ param($sender, $e) Confirm-Remove $sender.Tag })
         [void]$actions.Children.Add($d)
 
         $border.Child = $grid
-        $border.Add_MouseEnter({ param($s, $e) $s.Background = Br '#0D0D0D' })
-        $border.Add_MouseLeave({ param($s, $e) $s.Background = Br '#000000' })
+        $border.Add_MouseEnter({ param($sender, $e) $sender.Background = Br '#0D0D0D' })
+        $border.Add_MouseLeave({ param($sender, $e) $sender.Background = Br '#000000' })
         [void]$ui.GamesPanel.Children.Add($border)
     }
 
@@ -808,7 +834,7 @@ function Start-Install {
         Show-Confirm -Title 'Substituir jogos existentes?' `
             -Text ("Estes jogos já estão no pendrive e serão regravados:`n`n{0}" -f ($dups -join "`n")) `
             -YesLabel 'SUBSTITUIR' `
-            -OnYes { Start-Worker -Jobs $jobs }
+            -OnYes ({ Start-Worker -Jobs $jobs }).GetNewClosure()
         return
     }
 
@@ -827,18 +853,30 @@ function Start-Export {
     $dlg.ShowNewFolderButton = $true
     if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
 
-    $dest = Join-Path $dlg.SelectedPath ($Game.Nome + '.iso')
-    if (Test-Path -LiteralPath $dest) {
-        Show-Confirm -Title 'Sobrescrever arquivo?' -Text ("Já existe:`n$dest") -YesLabel 'SOBRESCREVER' `
-            -OnYes { Start-Worker -Jobs @([pscustomobject]@{
-                        Op = 'export'; Root = "$($S.Drive):\"; Serial = $Game.Serial; Name = $Game.Nome; Dest = $dest
-                    }) }
+    Start-ExportTo -Game $Game -Dest (Join-Path $dlg.SelectedPath ($Game.Nome + '.iso'))
+}
+
+function Start-ExportTo {
+    <#
+        Parte sem diálogo do Start-Export: recebe o destino pronto.
+        É o que o teste automatizado usa (não dá para clicar em diálogo nativo).
+    #>
+    param($Game, [string]$Dest)
+
+    if ($S.Busy) { return }
+    if (-not $Dest) { return }
+
+    $job = [pscustomobject]@{
+        Op = 'export'; Root = "$($S.Drive):\"; Serial = $Game.Serial; Name = $Game.Nome; Dest = $Dest
+    }
+
+    if (Test-Path -LiteralPath $Dest) {
+        Show-Confirm -Title 'Sobrescrever arquivo?' -Text ("Já existe:`n$Dest") -YesLabel 'SOBRESCREVER' `
+            -OnYes ({ Start-Worker -Jobs @($job) }).GetNewClosure()
         return
     }
 
-    Start-Worker -Jobs @([pscustomobject]@{
-        Op = 'export'; Root = "$($S.Drive):\"; Serial = $Game.Serial; Name = $Game.Nome; Dest = $dest
-    })
+    Start-Worker -Jobs @($job)
 }
 
 function Confirm-Remove {
@@ -848,7 +886,7 @@ function Confirm-Remove {
 
     $label = if ($Game.Tipo -eq 'dvd') { "Apagar o arquivo $($Game.Nome).iso da pasta DVD?" } else { "Apagar '$($Game.Nome)' ($($Game.Partes) pedaço(s)) e remover do ul.cfg?" }
 
-    Show-Confirm -Title 'Remover do pendrive' -Text ($label + "`n`nEssa ação não pode ser desfeita.") -YesLabel 'APAGAR' -OnYes {
+    $onYes = {
         try {
             if ($Game.Tipo -eq 'dvd') {
                 Remove-Item -LiteralPath $Game.Path -Force
@@ -864,10 +902,31 @@ function Confirm-Remove {
             Add-Log "Erro ao remover: $($_.Exception.Message)" 'error'
             Show-Toast 'Erro ao remover' $_.Exception.Message 'error'
         }
-    }
+    }.GetNewClosure()
+
+    Show-Confirm -Title 'Remover do pendrive' -Text ($label + "`n`nEssa ação não pode ser desfeita.") -YesLabel 'APAGAR' -OnYes $onYes
 }
 
 # ---------------------------------------------------------------- eventos
+
+# Rede de segurança: um erro dentro de um handler não pode fechar a janela.
+# (foi assim que um bug de variável virou "cliquei e o app sumiu")
+$win.Dispatcher.Add_UnhandledException({
+    param($sender, $e)
+
+    $e.Handled = $true
+    $msg = $e.Exception.GetBaseException().Message
+
+    try { Add-Log ("ERRO inesperado: {0}" -f $msg) 'error' } catch { }
+    try { Set-Status 'ERRO' '#FF5555' } catch { }
+    try { Show-Toast 'Erro inesperado' $msg 'error' } catch { }
+
+    try {
+        $log = Join-Path ([IO.Path]::GetTempPath()) 'EasyRomsToOPL-error.log'
+        ("[{0}] {1}`r`n{2}`r`n" -f (Get-Date).ToString('s'), $e.Exception, $e.Exception.StackTrace) |
+            Add-Content -LiteralPath $log -Encoding UTF8
+    } catch { }
+})
 
 $ui.BtnClose.Add_Click({ $win.Close() })
 $ui.BtnMin.Add_Click({ $win.WindowState = 'Minimized' })
@@ -894,7 +953,13 @@ $ui.BtnCancelConfirm.Add_Click({ Hide-Confirm })
 $ui.BtnYesConfirm.Add_Click({
     $action = $S.Confirm
     Hide-Confirm
-    if ($action) { & $action }
+    if (-not $action) { return }
+    try {
+        & $action
+    } catch {
+        Add-Log ("Erro ao executar a ação: {0}" -f $_.Exception.Message) 'error'
+        Show-Toast 'Ação falhou' $_.Exception.Message 'error'
+    }
 })
 
 $ui.BtnCopyLog.Add_MouseLeftButtonUp({
@@ -905,18 +970,10 @@ $ui.BtnCopyLog.Add_MouseLeftButtonUp({
     } catch { }
 })
 
-$ui.DropZone.Add_MouseLeftButtonUp({
-    $dlg = New-Object System.Windows.Forms.OpenFileDialog
-    $dlg.Title = 'Escolha as imagens de PS2'
-    $dlg.Filter = 'Imagens de PS2 (*.iso)|*.iso|Todos os arquivos (*.*)|*.*'
-    $dlg.Multiselect = $true
-    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        foreach ($f in $dlg.FileNames) { Add-IsoFile $f }
-    }
-})
+$ui.DropZone.Add_MouseLeftButtonUp({ Show-AddFilesDialog })
 
 $win.Add_DragOver({
-    param($s, $e)
+    param($sender, $e)
     if ($e.Data.GetDataPresent([Windows.DataFormats]::FileDrop)) {
         $e.Effects = 'Copy'
         $ui.DropZone.BorderBrush = Br '#8BE9FD'
@@ -933,17 +990,20 @@ $win.Add_DragLeave({
 })
 
 $win.Add_Drop({
-    param($s, $e)
+    param($sender, $e)
     $ui.DropZone.BorderBrush = Br '#333333'
     $ui.DropTitle.Text = 'ARRASTE OS .ISO AQUI'
-    $files = $e.Data.GetData([Windows.DataFormats]::FileDrop)
-    foreach ($f in $files) { Add-IsoFile $f }
+    Add-DroppedFiles -Files $e.Data.GetData([Windows.DataFormats]::FileDrop)
     $e.Handled = $true
 })
 
+function Hide-ConfirmIfOpen {
+    if ($ui.Overlay.Visibility -eq 'Visible') { Hide-Confirm }
+}
+
 $win.Add_KeyDown({
-    param($s, $e)
-    if ($e.Key -eq 'Escape' -and $ui.Overlay.Visibility -eq 'Visible') { Hide-Confirm }
+    param($sender, $e)
+    if ($e.Key -eq 'Escape') { Hide-ConfirmIfOpen }
 })
 
 # ---------------------------------------------------------------- boot
@@ -961,8 +1021,8 @@ function Initialize-Modes {
         $chip.ToolTip = $m.Tip
         $chip.IsChecked = ($m.Id -eq $S.Mode)
         $chip.Add_Click({
-            param($s, $e)
-            $S.Mode = $s.Tag
+            param($sender, $e)
+            $S.Mode = $sender.Tag
             foreach ($c in $ui.ModePanel.Children) { $c.IsChecked = ($c.Tag -eq $S.Mode) }
         })
         [void]$ui.ModePanel.Children.Add($chip)

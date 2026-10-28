@@ -1,4 +1,4 @@
-# EasyRomsToOPL
+﻿# EasyRomsToOPL
 
 **Adicione jogos de PS2 a um pendrive do OPL (Open PS2 Loader) — arrastando o arquivo ou em um comando. Sem USBUtil, sem quebrar o `ul.cfg`.**
 
@@ -6,7 +6,7 @@
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![PS2](https://img.shields.io/badge/PlayStation%202-OPL%20USB-003791?logo=playstation&logoColor=white)
 ![GUI](https://img.shields.io/badge/interface-WPF%20nativa-8BE9FD)
-![Testes](https://img.shields.io/badge/testes-37%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-129%20passando-brightgreen)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 
 **Interface gráfica** (arrastar e soltar) e **CLI** — as duas usando o mesmo motor.
@@ -253,6 +253,9 @@ separado (`gui/Worker.ps1`) para não travar a janela.
 
 # 20 asserções do worker da GUI: instala, exporta, cancela
 .\tests\Test-GuiWorker.ps1
+
+# 92 asserções da interface: clica em todo controle, instala e remove de verdade
+.\tests\Test-GuiUi.ps1
 ```
 
 ```
@@ -269,6 +272,18 @@ por ferramenta oficial. Se os testes passam, o CRC é bit a bit o do OPL.
 O `Test-GuiWorker.ps1` roda o **mesmo** `gui/Worker.ps1` que a interface usa, num
 diretório temporário: instala um ISO real, remonta o `.iso`, confere serial e tamanho,
 e valida o cancelamento. Se ele passa, a GUI não tem caminho de cópia divergente.
+
+O `Test-GuiUi.ps1` abre a janela de verdade (WPF) e **clica em cada controle**: chips de
+unidade, modos, INSTALAR, SIMULAR, LIMPAR LISTA, RECARREGAR, COPIAR, ✕ dos arquivos,
+✕ dos jogos (cancelar / ESC / confirmar), ISO (exportar), minimizar / maximizar / fechar —
+e ainda faz uma varredura que clica no que sobrou. Ele usa uma unidade virtual (`subst`)
+para nunca gravar em disco real, e falha se qualquer handler lançar exceção. Foi esse
+teste que encontrou o bug do clique que fechava o programa.
+
+```powershell
+# discos com erro de I/O conhecido podem ser pulados
+.\tests\Test-GuiUi.ps1 -SkipDrives "D"
+```
 
 ## Estrutura
 
@@ -292,7 +307,8 @@ easyromstooplps2/
 │   └── Build-Installer.ps1    # gera dist/Instalar-EasyRomsToOPL.cmd
 ├── tests/
 │   ├── Test-UlFormat.ps1      # 17 asserções do formato
-│   └── Test-GuiWorker.ps1     # 20 asserções do worker da GUI
+│   ├── Test-GuiWorker.ps1     # 20 asserções do worker da GUI
+│   └── Test-GuiUi.ps1         # 92 asserções clicando em todo controle
 ├── docs/
 │   ├── TUTORIAL.md            # passo a passo do zero (pendrive + FMCB + OPL)
 │   ├── UL-FORMAT.md           # especificação do formato ul.* / ul.cfg
