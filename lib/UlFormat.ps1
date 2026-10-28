@@ -233,3 +233,325 @@ function Get-IsoInfo {
         $fs.Dispose()
     }
 }
+
+# ===========================================================================
+#  Motor de instalação — usado pela CLI e pela GUI
+#
+#  Todas as funções abaixo aceitam:
+#    -OnLog      { param($level, $message) }   level: info | ok | warn | error
+#    -OnProgress { param($percent, $done, $total) }
+#    -State      [hashtable] opcional, com a chave Cancel = $true para abortar
+# ===========================================================================
+
+function Write-UlLog {
+    param([scriptblock]$OnLog, [string]$Level, [string]$Message)
+    if ($OnLog) { & $OnLog $Level $Message }
+}
+
+function Test-UlCancel {
+    param([hashtable]$State)
+    if ($State -and $State.Cancel) { throw 'Operação cancelada pelo usuário.' }
+}
+
+function Update-UlCfg {
+    <#
+        Remove a entrada do serial (se existir) e anexa a nova.
+        Devolve quantas entradas existiam antes.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Serial,
+        [Parameter(Mandatory)][int]$Parts,
+        [Parameter(Mandatory)][byte]$Media
+    )
+
+    $cfgPath = Join-Path $Root 'ul.cfg'
+    $old = if (Test-Path -LiteralPath $cfgPath) { [IO.File]::ReadAllBytes($cfgPath) } else { New-Object byte[] 0 }
+    $before = [int]($old.Length / 64)
+
+    $keep = New-Object 'System.Collections.Generic.List[byte]'
+    for ($o = 0; $o + 64 -le $old.Length; $o += 64) {
+        $s = [Text.Encoding]::ASCII.GetString($old, $o + 35, 12).TrimEnd([char]0, ' ')
+        if ($s -ne $Serial) {
+            $keep.AddRange([byte[]]$old[$o..($o + 63)])
+        } else {
+            $oldName = [Text.Encoding]::ASCII.GetString($old, $o, 32).TrimEnd([char]0, ' ')
+            if ($oldName -and $oldName -ne $Name) {
+                # nome mudou -> o CRC muda -> os pedaços antigos ficam órfãos
+                $oldCrc = '{0:X8}' -f (Get-UsbaCrc32 $oldName)
+                Get-ChildItem $Root -Filter "ul.$oldCrc.$Serial.*" -File -ErrorAction SilentlyContinue |
+                    Remove-Item -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    $entry = New-UlEntry -Name $Name -Serial $Serial -Parts $Parts -Media $Media
+    $stream = [IO.File]::Open($cfgPath, 'Create', 'Write', 'None')
+    try {
+        if ($keep.Count -gt 0) { $stream.Write($keep.ToArray(), 0, $keep.Count) }
+        $stream.Write($entry, 0, 64)
+    } finally { $stream.Dispose() }
+
+    return $before
+}
+
+function Install-UlGame {
+    <#
+        Instala um ISO no formato ul.* (pedaços de 1 GiB + entrada no ul.cfg).
+        Devolve um objeto com o resultado. Em caso de erro, apaga o que gravou.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$IsoPath,
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Serial,
+        [Parameter(Mandatory)][byte]$Media,
+        [switch]$Force,
+        [scriptblock]$OnLog,
+        [scriptblock]$OnProgress,
+        [hashtable]$State
+    )
+
+    $iso = Get-Item -LiteralPath $IsoPath
+    $partSize = $script:UlPartSize
+    $parts = [int][Math]::Ceiling($iso.Length / $partSize)
+    if ($parts -lt 1) { throw 'ISO vazio.' }
+    if ($parts -gt 255) { throw 'ISO grande demais para o formato ul.* (máximo 255 pedaços).' }
+
+    $existing = @(Read-UlEntries $Root)
+    $dup = $existing | Where-Object { $_.Serial -eq $Serial } | Select-Object -First 1
+    if ($dup -and -not $Force) {
+        throw "Já existe um jogo com o serial $Serial no ul.cfg ('$($dup.Nome)'). Use -Force para substituir."
+    }
+
+    $written = New-Object 'System.Collections.Generic.List[string]'
+    $total = [double]$iso.Length
+    $done = [double]0
+
+    try {
+        $src = [IO.File]::OpenRead($iso.FullName)
+        try {
+            $buffer = New-Object byte[] (8MB)
+            for ($i = 0; $i -lt $parts; $i++) {
+                Test-UlCancel $State
+
+                $partPath = Join-Path $Root (Get-UlPartName $Name $Serial $i)
+                $written.Add($partPath)
+
+                $remaining = [long]$iso.Length - ([long]$i * [long]$partSize)
+                $toWrite = [long][Math]::Min([long]$partSize, $remaining)
+
+                $dst = [IO.File]::Open($partPath, 'Create', 'Write', 'None')
+                try {
+                    $left = $toWrite
+                    while ($left -gt 0) {
+                        Test-UlCancel $State
+                        $chunk = [int][Math]::Min($buffer.Length, $left)
+                        $read = $src.Read($buffer, 0, $chunk)
+                        if ($read -le 0) { throw 'Fim inesperado do ISO durante a cópia.' }
+                        $dst.Write($buffer, 0, $read)
+                        $left -= $read
+                        $done += $read
+                        if ($OnProgress) {
+                            $pct = [int][Math]::Min(100, [Math]::Floor(100 * $done / $total))
+                            & $OnProgress $pct $done $total
+                        }
+                    }
+                } finally { $dst.Dispose() }
+
+                Write-UlLog $OnLog 'info' ("parte {0}/{1} gravada ({2})" -f ($i + 1), $parts, (Format-Size $toWrite))
+            }
+        } finally { $src.Dispose() }
+
+        $totalWritten = ($written | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum
+        if ($totalWritten -ne $iso.Length) {
+            throw "Tamanho gravado ($totalWritten) diferente do ISO ($($iso.Length))."
+        }
+
+        $before = Update-UlCfg -Root $Root -Name $Name -Serial $Serial -Parts $parts -Media $Media
+        if ($before -eq 0) { Write-UlLog $OnLog 'info' 'ul.cfg criado.' }
+
+        if ($OnProgress) { & $OnProgress 100 $total $total }
+
+        return [pscustomobject]@{
+            Nome     = $Name
+            Serial   = $Serial
+            Partes   = $parts
+            Media    = $Media
+            Crc      = ('{0:X8}' -f (Get-UsbaCrc32 $Name))
+            Bytes    = $iso.Length
+            Arquivos = $written.ToArray()
+        }
+    }
+    catch {
+        foreach ($f in $written) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+        throw
+    }
+}
+
+function Install-DvdFolderGame {
+    <#
+        Copia o ISO inteiro para <Root>\DVD (só abaixo de 4 GB, limite do FAT32).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$IsoPath,
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Name,
+        [scriptblock]$OnLog,
+        [scriptblock]$OnProgress,
+        [hashtable]$State
+    )
+
+    $iso = Get-Item -LiteralPath $IsoPath
+    $limit = 4GB - 1MB
+    if ($iso.Length -ge $limit) {
+        throw ("Esse ISO tem {0} e não cabe na pasta DVD: FAT32 não aceita arquivo de 4 GB ou mais. Use o formato ul.*." -f (Format-Size $iso.Length))
+    }
+
+    $destFolder = Join-Path $Root 'DVD'
+    if (-not (Test-Path -LiteralPath $destFolder)) { New-Item -ItemType Directory -Path $destFolder | Out-Null }
+    $dest = Join-Path $destFolder ($Name + '.iso')
+
+    $total = [double]$iso.Length
+    $done = [double]0
+    $src = [IO.File]::OpenRead($iso.FullName)
+    try {
+        $dst = [IO.File]::Open($dest, 'Create', 'Write', 'None')
+        try {
+            $buffer = New-Object byte[] (8MB)
+            while ($true) {
+                Test-UlCancel $State
+                $read = $src.Read($buffer, 0, $buffer.Length)
+                if ($read -le 0) { break }
+                $dst.Write($buffer, 0, $read)
+                $done += $read
+                if ($OnProgress) {
+                    $pct = [int][Math]::Min(100, [Math]::Floor(100 * $done / $total))
+                    & $OnProgress $pct $done $total
+                }
+            }
+        } finally { $dst.Dispose() }
+    } catch {
+        Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+        throw
+    } finally { $src.Dispose() }
+
+    if ((Get-Item -LiteralPath $dest).Length -ne $iso.Length) {
+        Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+        throw 'Cópia incompleta: o arquivo de destino não tem o mesmo tamanho do ISO.'
+    }
+
+    Write-UlLog $OnLog 'ok' "ISO copiado para $dest"
+    if ($OnProgress) { & $OnProgress 100 $total $total }
+
+    return [pscustomobject]@{
+        Nome   = $Name
+        Serial = $null
+        Bytes  = $iso.Length
+        Destino = $dest
+    }
+}
+
+function Remove-UlGame {
+    <#
+        Apaga os pedaços de um jogo e remove a entrada do ul.cfg.
+        Devolve os arquivos removidos.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Serial
+    )
+
+    $cfgPath = Join-Path $Root 'ul.cfg'
+    if (-not (Test-Path -LiteralPath $cfgPath)) { throw 'ul.cfg não encontrado.' }
+
+    $old = [IO.File]::ReadAllBytes($cfgPath)
+    $keep = New-Object 'System.Collections.Generic.List[byte]'
+    $removed = New-Object 'System.Collections.Generic.List[string]'
+    $found = $false
+
+    for ($o = 0; $o + 64 -le $old.Length; $o += 64) {
+        $s = [Text.Encoding]::ASCII.GetString($old, $o + 35, 12).TrimEnd([char]0, ' ')
+        if ($s -ne $Serial) {
+            $keep.AddRange([byte[]]$old[$o..($o + 63)])
+            continue
+        }
+        $found = $true
+        $name = [Text.Encoding]::ASCII.GetString($old, $o, 32).TrimEnd([char]0, ' ')
+        $crc = '{0:X8}' -f (Get-UsbaCrc32 $name)
+        Get-ChildItem $Root -Filter "ul.$crc.$Serial.*" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $removed.Add($_.FullName)
+            Remove-Item -LiteralPath $_.FullName -Force
+        }
+    }
+
+    if (-not $found) { throw "Serial $Serial não encontrado no ul.cfg." }
+
+    [IO.File]::WriteAllBytes($cfgPath, $keep.ToArray())
+    return $removed.ToArray()
+}
+
+function Export-UlToIso {
+    <#
+        Remonta os pedaços de um jogo em um .iso único (para PCSX2 ou backup).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Serial,
+        [Parameter(Mandatory)][string]$Destination,
+        [scriptblock]$OnLog,
+        [scriptblock]$OnProgress,
+        [hashtable]$State
+    )
+
+    $entry = @(Read-UlEntries $Root) | Where-Object { $_.Serial -eq $Serial } | Select-Object -First 1
+    if (-not $entry) { throw "Serial $Serial não encontrado no ul.cfg." }
+
+    $base = Join-Path $Root ("ul.{0}.{1}" -f $entry.Crc, $Serial)
+    $partFiles = @(0..([int]$entry.Partes - 1) | ForEach-Object { '{0}.{1:x2}' -f $base, $_ })
+    $missing = @($partFiles | Where-Object { -not (Test-Path -LiteralPath $_) })
+    if ($missing.Count -gt 0) {
+        throw ("Faltam {0} pedaço(s): {1}" -f $missing.Count, (($missing | ForEach-Object { Split-Path $_ -Leaf }) -join ', '))
+    }
+
+    $total = [double](($partFiles | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum)
+    $done = [double]0
+
+    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
+
+    $out = [IO.File]::Create($Destination)
+    try {
+        $buffer = New-Object byte[] (8MB)
+        foreach ($part in $partFiles) {
+            Test-UlCancel $State
+            Write-UlLog $OnLog 'info' ("juntando {0}" -f (Split-Path $part -Leaf))
+            $in = [IO.File]::OpenRead($part)
+            try {
+                while ($true) {
+                    Test-UlCancel $State
+                    $read = $in.Read($buffer, 0, $buffer.Length)
+                    if ($read -le 0) { break }
+                    $out.Write($buffer, 0, $read)
+                    $done += $read
+                    if ($OnProgress) {
+                        $pct = [int][Math]::Min(100, [Math]::Floor(100 * $done / $total))
+                        & $OnProgress $pct $done $total
+                    }
+                }
+            } finally { $in.Dispose() }
+        }
+    } catch {
+        $out.Dispose()
+        Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+        throw
+    } finally { $out.Dispose() }
+
+    if ((Get-Item -LiteralPath $Destination).Length -ne $total) {
+        Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+        throw 'ISO remontado com tamanho diferente da soma dos pedaços.'
+    }
+
+    if ($OnProgress) { & $OnProgress 100 $total $total }
+    return [pscustomobject]@{ Nome = $entry.Nome; Destino = $Destination; Bytes = $total }
+}

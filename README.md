@@ -1,14 +1,38 @@
 # EasyRomsToOPL
 
-**Adicione jogos de PS2 a um pendrive do OPL (Open PS2 Loader) em um comando — sem USBUtil, sem clicar em nada, sem quebrar o `ul.cfg`.**
+**Adicione jogos de PS2 a um pendrive do OPL (Open PS2 Loader) — arrastando o arquivo ou em um comando. Sem USBUtil, sem quebrar o `ul.cfg`.**
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?logo=powershell&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![PS2](https://img.shields.io/badge/PlayStation%202-OPL%20USB-003791?logo=playstation&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-17%20passando-brightgreen)
+![GUI](https://img.shields.io/badge/interface-WPF%20nativa-8BE9FD)
+![Testes](https://img.shields.io/badge/testes-37%20passando-brightgreen)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 
+**Interface gráfica** (arrastar e soltar) e **CLI** — as duas usando o mesmo motor.
+
 ---
+
+## Interface gráfica
+
+![Interface do EasyRomsToOPL](docs/screenshot.png)
+
+Abra com **duplo clique em `EasyRomsToOPL.cmd`** (ou rode `gui\EasyRomsToOPL.GUI.ps1`).
+Sem instalação, sem Electron, sem runtime extra: é WPF nativo do Windows.
+
+- **Arraste os `.iso`** para a área pontilhada (ou clique para escolher vários).
+- O serial é **lido do `SYSTEM.CNF`** na hora e mostrado antes de gravar.
+- Escolha **UL.\* (1 GiB)** ou **DVD (ISO < 4 GB)** — com validação de tamanho.
+- **SIMULAR** gera o plano completo no log sem escrever nada.
+- **INSTALAR** mostra progresso real (bytes, %), log com timestamp e aviso de duplicados.
+- **JOGOS NO PENDRIVE** lista o que já está lá, com CRC e número de pedaços.
+- Botão **ISO** remonta os pedaços de um jogo em `.iso` único (para PCSX2 ou backup).
+- Botão **✕** remove um jogo (pedaços + entrada do `ul.cfg`), com confirmação.
+- Unidades fixas aparecem marcadas com `HD` — o padrão é sempre o pendrive removível.
+
+O visual segue os tokens do `terminal.css` (a biblioteca de componentes usada como
+referência): fundo `#050505`, ciano `#8BE9FD`, JetBrains Mono com fallback para
+Cascadia/Consolas, bordas de 1px e nada de cantos arredondados.
 
 ## O problema
 
@@ -43,7 +67,7 @@ por ferramentas oficiais** — os testes comparam com vetores reais (`7C39E2C0`,
 
 ---
 
-## Quickstart
+## Quickstart (CLI)
 
 ```powershell
 # 1. clone
@@ -74,12 +98,17 @@ No PS2: ligue o console → FMCB → **OPL → USB** → o jogo está na lista.
 
 ## Instalação
 
-O script não tem dependências, não instala nada e não precisa de módulo externo:
+Nada de dependências: nem Node, nem Electron, nem módulo PowerShell. Só clonar:
 
 ```powershell
 git clone https://github.com/lucao019/easyromstooplps2.git
 cd easyromstooplps2
 ```
+
+Depois:
+
+- **Interface:** duplo clique em `EasyRomsToOPL.cmd`.
+- **CLI:** `.\EasyRomsToOPL.ps1 -Listar`.
 
 Se o Windows bloquear a execução:
 
@@ -93,7 +122,13 @@ Ou rode direto, sem mexer na política do sistema:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\EasyRomsToOPL.ps1 -Listar
 ```
 
-## Uso
+A GUI também aceita parâmetros, útil para criar um atalho ou usar "Abrir com":
+
+```powershell
+powershell -File .\gui\EasyRomsToOPL.GUI.ps1 -Drive F -Iso "E:\jogos\Okami.iso"
+```
+
+## Uso (CLI)
 
 ```
 .\EasyRomsToOPL.ps1 [-Iso <caminho>] [-Drive <letra>] [-Nome <nome>] [-Serial <serial>]
@@ -161,6 +196,11 @@ Pronto! 'God of War' (SCUS_973.99) adicionado.
 O formato completo, com offsets e o detalhe do CRC, está em
 [`docs/UL-FORMAT.md`](docs/UL-FORMAT.md).
 
+CLI e GUI não têm código duplicado: as duas chamam as mesmas funções de
+`lib/UlFormat.ps1` (`Install-UlGame`, `Install-DvdFolderGame`, `Remove-UlGame`,
+`Export-UlToIso`). A GUI só acrescenta a camada visual e roda a cópia em um runspace
+separado (`gui/Worker.ps1`) para não travar a janela.
+
 ## Limitações (leia antes de culpar o script)
 
 - **USB 1.1 do PS2 ≈ 1 MB/s.** Isso é ~5x mais lento que o DVD do console. Jogos com
@@ -188,10 +228,14 @@ O formato completo, com offsets e o detalhe do CRC, está em
 ## Testes
 
 ```powershell
+# 17 asserções do formato (CRC, entrada de 64 bytes, nomes, normalização)
 .\tests\Test-UlFormat.ps1
 
 # inclui a leitura de um ISO real
 .\tests\Test-UlFormat.ps1 -IsoPath "E:\jogos\God of War (USA).iso"
+
+# 20 asserções do worker da GUI: instala, exporta, cancela
+.\tests\Test-GuiWorker.ps1
 ```
 
 ```
@@ -205,19 +249,30 @@ Resultado: 17 passaram, 0 falharam
 Os vetores de CRC não foram inventados: saíram de um pendrive real, com jogos instalados
 por ferramenta oficial. Se os testes passam, o CRC é bit a bit o do OPL.
 
+O `Test-GuiWorker.ps1` roda o **mesmo** `gui/Worker.ps1` que a interface usa, num
+diretório temporário: instala um ISO real, remonta o `.iso`, confere serial e tamanho,
+e valida o cancelamento. Se ele passa, a GUI não tem caminho de cópia divergente.
+
 ## Estrutura
 
 ```
 easyromstooplps2/
-├── EasyRomsToOPL.ps1          # CLI principal
+├── EasyRomsToOPL.ps1          # CLI
+├── EasyRomsToOPL.cmd          # atalho: abre a interface sem console
 ├── lib/
-│   └── UlFormat.ps1           # CRC, entrada de 64 bytes, leitura de ISO9660
+│   └── UlFormat.ps1           # CRC, entrada de 64 bytes, ISO9660, motor de instalação
+├── gui/
+│   ├── EasyRomsToOPL.GUI.ps1  # front-end WPF
+│   ├── MainWindow.xaml        # layout e tema (tokens do terminal.css)
+│   └── Worker.ps1             # execução assíncrona (runspace + progresso)
 ├── tests/
-│   └── Test-UlFormat.ps1      # 17 asserções, incluindo vetores reais
+│   ├── Test-UlFormat.ps1      # 17 asserções do formato
+│   └── Test-GuiWorker.ps1     # 20 asserções do worker da GUI
 ├── docs/
 │   ├── TUTORIAL.md            # passo a passo do zero (pendrive + FMCB + OPL)
 │   ├── UL-FORMAT.md           # especificação do formato ul.* / ul.cfg
-│   └── CASE-STUDY.md          # diagnóstico de um pendrive real de 64 GB
+│   ├── CASE-STUDY.md          # diagnóstico de um pendrive real de 64 GB
+│   └── screenshot.png         # captura da interface
 ├── CHANGELOG.md
 └── LICENSE
 ```

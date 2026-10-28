@@ -4,6 +4,32 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.1.0] — 2026-10-28
+
+### Adicionado
+
+- **Interface gráfica (WPF)** — `gui/EasyRomsToOPL.GUI.ps1`, aberta por
+  `EasyRomsToOPL.cmd`. Sem dependências além do .NET que já vem no Windows.
+  - Arrastar e soltar vários `.iso` de uma vez.
+  - Validação imediata: mostra serial lido do `SYSTEM.CNF` antes de gravar.
+  - Modo `ul.*` ou pasta `DVD`, com bloqueio de ISO ≥ 4 GB no modo DVD.
+  - Progresso real em bytes/porcentagem e log com timestamp.
+  - Tabela dos jogos já instalados, com CRC e número de pedaços.
+  - Remontagem de um jogo `ul.*` em `.iso` único, direto pela interface.
+  - Remoção de jogo (pedaços + entrada do `ul.cfg`) com confirmação.
+  - Aviso de duplicados com opção de substituir.
+  - Visual baseado nos tokens do `terminal.css` (JetBrains Mono, `#050505`, ciano `#8BE9FD`).
+- `gui/Worker.ps1`: execução em runspace separado, com progresso, log e cancelamento.
+- `tests/Test-GuiWorker.ps1`: 20 asserções cobrindo instalação, remontagem e cancelamento.
+- Parâmetros `-Drive` e `-Iso` na GUI (atalhos / "Abrir com").
+
+### Alterado
+
+- O motor de instalação saiu da CLI e foi para `lib/UlFormat.ps1`:
+  `Install-UlGame`, `Install-DvdFolderGame`, `Remove-UlGame`, `Export-UlToIso`,
+  `Update-UlCfg`. CLI e GUI agora compartilham a mesma implementação.
+- CLI usa o motor compartilhado; comportamento e mensagens preservados.
+
 ## [1.0.0] — 2026-10-28
 
 Primeira versão pública. Nasceu de um diagnóstico real de um pendrive de 64 GB usado em
@@ -42,4 +68,5 @@ um PS2 com FreeMcBoot/OPL — ver [docs/CASE-STUDY.md](docs/CASE-STUDY.md).
   Medalha de Honra, ULTIMO BOMBA, God of War e Crash Twinsanity).
 - God of War (DVD9, 7,94 GB) instalado em 8 pedaços; soma conferida byte a byte.
 
+[1.1.0]: https://github.com/lucao019/easyromstooplps2/releases/tag/v1.1.0
 [1.0.0]: https://github.com/lucao019/easyromstooplps2/releases/tag/v1.0.0

@@ -167,7 +167,10 @@ if ($DvdFolder) {
 
     if ($DryRun) { Write-Host "`n[dry-run] nada foi gravado." -ForegroundColor Yellow; return }
 
-    Copy-Item -LiteralPath $isoItem.FullName -Destination $dest -Force
+    Install-DvdFolderGame -IsoPath $isoItem.FullName -Root $Root -Name $gameName -OnLog {
+        param($level, $message)
+        if ($level -eq 'ok') { Write-Host "  $message" -ForegroundColor DarkGray }
+    } | Out-Null
     Write-Host "`nOK. O OPL lista o jogo ao abrir a lista de USB." -ForegroundColor Green
     return
 }
@@ -216,76 +219,22 @@ if ($dup -and -not $Force) {
 }
 Write-Host ""
 
-$written = @()
+$onLog = {
+    param($level, $message)
+    switch ($level) {
+        'ok'    { Write-Host "  $message" -ForegroundColor Green }
+        'warn'  { Write-Host "  $message" -ForegroundColor Yellow }
+        'error' { Write-Host "  $message" -ForegroundColor Red }
+        default { Write-Host "  $message" -ForegroundColor DarkGray }
+    }
+}
+
 try {
-    $src = [IO.File]::OpenRead($isoItem.FullName)
-    try {
-        $buffer = New-Object byte[] (8MB)
-        for ($i = 0; $i -lt $parts; $i++) {
-            $partPath = Join-Path $Root (Get-UlPartName $gameName $gameSerial $i)
-            $written += $partPath
-
-            $remaining = $isoItem.Length - ([long]$i * [long]$PartSize)
-            $toWrite = [long][Math]::Min([long]$PartSize, [long]$remaining)
-
-            $dst = [IO.File]::Open($partPath, 'Create', 'Write', 'None')
-            try {
-                $left = $toWrite
-                while ($left -gt 0) {
-                    $chunk = [int][Math]::Min($buffer.Length, $left)
-                    $read = $src.Read($buffer, 0, $chunk)
-                    if ($read -le 0) { throw "Fim inesperado do ISO durante a cópia." }
-                    $dst.Write($buffer, 0, $read)
-                    $left -= $read
-                }
-            } finally { $dst.Dispose() }
-
-            Write-Host ("  parte {0}/{1} gravada ({2})" -f ($i + 1), $parts, (Format-Size $toWrite)) -ForegroundColor DarkGray
-        }
-    } finally { $src.Dispose() }
-
-    # conferência de tamanho
-    $totalWritten = ($written | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum
-    if ($totalWritten -ne $isoItem.Length) {
-        throw "Tamanho gravado ($totalWritten) diferente do ISO ($($isoItem.Length))."
-    }
-
-    # ul.cfg
-    $cfgPath = Join-Path $Root 'ul.cfg'
-    $old = if (Test-Path -LiteralPath $cfgPath) { [IO.File]::ReadAllBytes($cfgPath) } else { New-Object byte[] 0 }
-
-    if ($Force -and $dup) {
-        $keep = New-Object 'System.Collections.Generic.List[byte]'
-        for ($o = 0; $o + 64 -le $old.Length; $o += 64) {
-            $s = [Text.Encoding]::ASCII.GetString($old, $o + 35, 12).TrimEnd([char]0, ' ')
-            if ($s -ne $gameSerial) {
-                $keep.AddRange([byte[]]$old[$o..($o + 63)])
-            } else {
-                $oldName = [Text.Encoding]::ASCII.GetString($old, $o, 32).TrimEnd([char]0, ' ')
-                if ($oldName -ne $gameName) {
-                    # nome mudou -> o CRC muda -> apaga os pedaços antigos
-                    $oldCrc = '{0:X8}' -f (Get-UsbaCrc32 $oldName)
-                    Get-ChildItem $Root -Filter "ul.$oldCrc.$gameSerial.*" -File -ErrorAction SilentlyContinue |
-                        Remove-Item -Force -ErrorAction SilentlyContinue
-                }
-            }
-        }
-        $old = $keep.ToArray()
-    }
-
-    $entry = New-UlEntry -Name $gameName -Serial $gameSerial -Parts $parts -Media $media
-    $stream = [IO.File]::Open($cfgPath, 'Append', 'Write', 'None')
-    try {
-        $stream.Write($entry, 0, 64)
-        if ($old.Length -eq 0) { Write-Verbose "ul.cfg criado." }
-    } finally { $stream.Dispose() }
+    $result = Install-UlGame -IsoPath $isoItem.FullName -Root $Root -Name $gameName `
+        -Serial $gameSerial -Media $media -Force:$Force -OnLog $onLog
 }
 catch {
     Write-Host "`nERRO: $_" -ForegroundColor Red
-    if ($written.Count -gt 0) {
-        Write-Host "Apagando as partes gravadas para não deixar lixo..." -ForegroundColor Yellow
-        $written | ForEach-Object { Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue }
-    }
     throw
 }
 

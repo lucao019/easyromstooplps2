@@ -103,6 +103,21 @@ formatação/porta — não é o jogo.
 
 ## 5. Adicionar um jogo
 
+### 5.0 Caminho rápido: interface gráfica
+
+Se você não quer terminal:
+
+1. Duplo clique em **`EasyRomsToOPL.cmd`**.
+2. Confira o chip do pendrive em **PENDRIVE** (o removível é escolhido sozinho).
+3. **Arraste os `.iso`** para a área pontilhada.
+4. Veja o serial que apareceu — se estiver vazio ou vermelho, o ISO não serve.
+5. Escolha o modo (**UL.\* (1 GiB)** quase sempre) e o nome no menu.
+6. Clique em **SIMULAR** para ver o plano; depois **INSTALAR NO PENDRIVE**.
+
+O log mostra cada pedaço gravado. Ao terminar, a lista **JOGOS NO PENDRIVE** já aparece
+atualizada — se o jogo está ali, o PS2 vai enxergar. O resto deste passo é o caminho CLI,
+útil para automação e para entender o que a interface faz por baixo.
+
 ### 5.1 Clone a ferramenta
 
 ```powershell
@@ -225,6 +240,9 @@ Expectativa realista com USB 1.1 (~1 MB/s):
 - Não é defeito da instalação — é o barramento do console.
 
 ## 9. Levar os jogos de volta para o PC
+
+Na interface, cada jogo `ul.*` tem um botão **ISO** que remonta os pedaços em um `.iso`
+único na pasta que você escolher. Abaixo, o equivalente em linha de comando.
 
 O PCSX2 **não lê** os pedaços `ul.*`. Para rodar no PC, remonte o ISO único: basta
 concatenar os pedaços na ordem `00`, `01`, `02`…
