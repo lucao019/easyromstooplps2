@@ -125,6 +125,11 @@ git clone https://github.com/lucao019/easyromstooplps2.git
 cd easyromstooplps2
 ```
 
+Se você só quer a interface instalada no PC, sem clonar nada: baixe
+`dist/Instalar-EasyRomsToOPL.cmd` e dê duplo clique. Ele instala em
+`%LOCALAPPDATA%\EasyRomsToOPL` e cria o atalho na Área de Trabalho e no Menu Iniciar —
+sem administrador e sem tocar no registro. O desinstalador fica no Menu Iniciar.
+
 ### 5.2 Veja o estado atual
 
 ```powershell

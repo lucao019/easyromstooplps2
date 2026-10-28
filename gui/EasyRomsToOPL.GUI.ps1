@@ -56,7 +56,7 @@ $ui = @{}
     'NameBox', 'BtnSimulate', 'BtnInstall', 'HintText', 'DrivesPanel', 'DriveCount', 'StatSpace',
     'StatGames', 'Bar', 'BarText', 'BarPct', 'BtnRefresh', 'GamesPanel', 'BtnCopyLog', 'LogBox',
     'StatusText', 'BusyDot', 'Toasts', 'Overlay', 'ConfirmTitle', 'ConfirmText', 'BtnCancelConfirm',
-    'BtnYesConfirm', 'BtnMin', 'BtnMax', 'BtnClose'
+    'BtnYesConfirm', 'BtnMin', 'BtnMax', 'BtnClose', 'VersionText'
 ) | ForEach-Object { $ui[$_] = $win.FindName($_) }
 
 # ---------------------------------------------------------------- estado
@@ -968,6 +968,15 @@ function Initialize-Modes {
         [void]$ui.ModePanel.Children.Add($chip)
     }
 }
+
+# A versão vem do CHANGELOG (um lugar só para lembrar de atualizar).
+try {
+    $cl = Join-Path $repoRoot 'CHANGELOG.md'
+    if (Test-Path -LiteralPath $cl) {
+        $m = [regex]::Match((Get-Content -LiteralPath $cl -Raw -Encoding UTF8), '##\s*\[(\d+\.\d+\.\d+)\]')
+        if ($m.Success) { $ui.VersionText.Text = ('EASYROMSTOOPL {0} · MIT' -f $m.Groups[1].Value) }
+    }
+} catch { }
 
 Add-Log 'EASYROMS::OPL — motor ul.* carregado' 'ok'
 Add-Log ('CRC de referência: {0} (GTA) · {1} (Medalha)' -f ('{0:X8}' -f (Get-UsbaCrc32 'GTA - San Andreas')), ('{0:X8}' -f (Get-UsbaCrc32 'Medalha de Honra'))) 'dim'

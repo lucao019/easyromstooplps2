@@ -98,17 +98,31 @@ No PS2: ligue o console → FMCB → **OPL → USB** → o jogo está na lista.
 
 ## Instalação
 
-Nada de dependências: nem Node, nem Electron, nem módulo PowerShell. Só clonar:
+Nada de dependências: nem Node, nem Electron, nem módulo PowerShell.
+
+### Instalador (recomendado)
+
+Baixe **`dist/Instalar-EasyRomsToOPL.cmd`** (um arquivo só, ~170 KB) e dê duplo clique.
+Ele instala em `%LOCALAPPDATA%\EasyRomsToOPL` e cria os atalhos:
+
+- **Área de Trabalho** → `EasyRomsToOPL`
+- **Menu Iniciar** → `EasyRomsToOPL` (com o **Desinstalar** ao lado)
+
+Não pede administrador e não escreve no registro. Para remover, use o atalho
+*Desinstalar* do Menu Iniciar — sobram zero arquivos.
+
+### A partir do repositório
 
 ```powershell
 git clone https://github.com/lucao019/easyromstooplps2.git
 cd easyromstooplps2
 ```
 
-Depois:
+Depois, duplo clique em `Instalar-EasyRomsToOPL.cmd` — ou, se preferir não instalar nada,
+use direto da pasta:
 
-- **Interface:** duplo clique em `EasyRomsToOPL.cmd`.
-- **CLI:** `.\EasyRomsToOPL.ps1 -Listar`.
+- **Interface:** `EasyRomsToOPL.cmd`
+- **CLI:** `.\EasyRomsToOPL.ps1 -Listar`
 
 Se o Windows bloquear a execução:
 
@@ -127,6 +141,9 @@ A GUI também aceita parâmetros, útil para criar um atalho ou usar "Abrir com"
 ```powershell
 powershell -File .\gui\EasyRomsToOPL.GUI.ps1 -Drive F -Iso "E:\jogos\Okami.iso"
 ```
+
+> O atalho aponta para o PowerShell com a janela escondida — por isso não existe `.exe`:
+> o programa é 100% script, e um executável só existiria para embrulhar o mesmo comando.
 
 ## Uso (CLI)
 
@@ -258,13 +275,21 @@ e valida o cancelamento. Se ele passa, a GUI não tem caminho de cópia divergen
 ```
 easyromstooplps2/
 ├── EasyRomsToOPL.ps1          # CLI
-├── EasyRomsToOPL.cmd          # atalho: abre a interface sem console
+├── EasyRomsToOPL.cmd          # abre a interface sem console (portátil)
+├── Instalar-EasyRomsToOPL.ps1 # instalador: copia, cria atalhos, desinstala
+├── Instalar-EasyRomsToOPL.cmd # instalador (duplo clique)
+├── dist/
+│   └── Instalar-EasyRomsToOPL.cmd  # instalador de arquivo único (~170 KB)
 ├── lib/
 │   └── UlFormat.ps1           # CRC, entrada de 64 bytes, ISO9660, motor de instalação
 ├── gui/
 │   ├── EasyRomsToOPL.GUI.ps1  # front-end WPF
 │   ├── MainWindow.xaml        # layout e tema (tokens do terminal.css)
-│   └── Worker.ps1             # execução assíncrona (runspace + progresso)
+│   ├── Worker.ps1             # execução assíncrona (runspace + progresso)
+│   └── EasyRomsToOPL.ico      # ícone do atalho
+├── tools/
+│   ├── New-Icon.ps1           # gera o .ico (16…256)
+│   └── Build-Installer.ps1    # gera dist/Instalar-EasyRomsToOPL.cmd
 ├── tests/
 │   ├── Test-UlFormat.ps1      # 17 asserções do formato
 │   └── Test-GuiWorker.ps1     # 20 asserções do worker da GUI

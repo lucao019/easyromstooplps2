@@ -4,6 +4,23 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.2.0] — 2026-10-28
+
+### Adicionado
+
+- **Instalador** (`Instalar-EasyRomsToOPL.cmd`): copia o programa para
+  `%LOCALAPPDATA%\EasyRomsToOPL`, cria atalho na Área de Trabalho e no Menu Iniciar
+  (com o desinstalador ao lado). Não pede administrador e não escreve no registro.
+- **Instalador de arquivo único** (`dist\Instalar-EasyRomsToOPL.cmd`, ~170 KB):
+  auto-extrai em `%TEMP%` e chama o instalador. Serve para levar em um pendrive ou
+  instalar em outro PC sem baixar o repositório.
+- `gui\EasyRomsToOPL.ico`: ícone próprio do atalho (borda ciano, "E", barra verde).
+- `tools\New-Icon.ps1`: gera o `.ico` nos tamanhos 16/32/48/64/128/256.
+- `tools\Build-Installer.ps1`: gera o instalador de arquivo único a partir do repo.
+- Opções do instalador: `-Uninstall`, `-DesktopPath`, `-NoDesktop`, `-NoStartMenu`,
+  `-Quiet`, `-Target`.
+- `Desinstalar.cmd` gerado dentro da pasta instalada.
+
 ## [1.1.0] — 2026-10-28
 
 ### Adicionado
@@ -68,5 +85,6 @@ um PS2 com FreeMcBoot/OPL — ver [docs/CASE-STUDY.md](docs/CASE-STUDY.md).
   Medalha de Honra, ULTIMO BOMBA, God of War e Crash Twinsanity).
 - God of War (DVD9, 7,94 GB) instalado em 8 pedaços; soma conferida byte a byte.
 
+[1.2.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/lucao019/easyromstooplps2/tree/v1.0.0
