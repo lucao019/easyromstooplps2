@@ -358,22 +358,11 @@
 
           <StackPanel x:Name="FilesPanel" Margin="0,-8,0,14"/>
 
-          <TextBlock Style="{StaticResource Section}" Text="02 // MODO DE INSTALAÇÃO"/>
-          <StackPanel x:Name="ModePanel" Orientation="Horizontal" Margin="0,0,0,10"/>
-
-          <TextBlock Style="{StaticResource Section}" Text="03 // NOME NO MENU DO OPL"/>
+          <TextBlock Style="{StaticResource Section}" Text="02 // NOME NO MENU DO OPL"/>
           <TextBox x:Name="NameBox" Style="{StaticResource Tb}" MaxLength="32"
                    ToolTip="Máximo 32 caracteres · acentos são removidos · não renomeie depois"/>
 
-          <Grid>
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="8"/>
-              <ColumnDefinition Width="1.4*"/>
-            </Grid.ColumnDefinitions>
-            <Button x:Name="BtnSimulate" Grid.Column="0" Style="{StaticResource BtnInfo}" Content="SIMULAR"/>
-            <Button x:Name="BtnInstall" Grid.Column="2" Style="{StaticResource BtnPrimary}" Content="INSTALAR NO PENDRIVE"/>
-          </Grid>
+          <Button x:Name="BtnInstall" Style="{StaticResource BtnPrimary}" Content="INSTALAR NO PENDRIVE"/>
 
           <TextBlock x:Name="HintText" Style="{StaticResource Dim}" Margin="0,10,0,0"
                      TextWrapping="Wrap" Text="Solte um jogo: o app grava no pendrive e atualiza o ul.cfg sozinho."/>
@@ -391,18 +380,21 @@
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- pendrive -->
+        <!-- dispositivo -->
         <Border Grid.Row="0" Style="{StaticResource Panel}">
           <StackPanel>
             <Border Style="{StaticResource PanelHeader}">
               <Grid>
-                <TextBlock Text="PENDRIVE" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
+                <TextBlock Text="DISPOSITIVO" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
                 <TextBlock x:Name="DriveCount" Text="" Style="{StaticResource Dim}" HorizontalAlignment="Right"/>
               </Grid>
             </Border>
             <StackPanel Margin="10">
-              <StackPanel x:Name="DrivesPanel" Orientation="Horizontal"/>
-              <Grid Margin="0,2,0,10">
+              <WrapPanel x:Name="DrivesPanel" Orientation="Horizontal"/>
+              <TextBlock x:Name="DeviceName" Text="—" FontSize="11" FontWeight="Bold"
+                         Foreground="{StaticResource Cyan}" TextTrimming="CharacterEllipsis"
+                         Margin="0,4,0,3"/>
+              <Grid Margin="0,0,0,10">
                 <TextBlock x:Name="StatSpace" Text="—" Style="{StaticResource Dim}"/>
                 <TextBlock x:Name="StatGames" Text="" Style="{StaticResource Dim}" HorizontalAlignment="Right"/>
               </Grid>
@@ -491,7 +483,7 @@
               </Grid>
 
               <TextBlock Grid.Row="1" Margin="10,0,10,6" FontSize="9" Foreground="#555555" TextWrapping="Wrap"
-                         Text="O OPL EXECUTA APENAS PS2 · PS1 E NINTENDO APARECEM SÓ PARA CONSULTA"/>
+                         Text="O OPL EXECUTA APENAS PS2 · O RESTO É CONSULTA · ZIP/RAR/7Z MOSTRAM O JOGO DE DENTRO"/>
 
               <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
                 <StackPanel x:Name="LibraryPanel"/>

@@ -53,8 +53,8 @@ $win = [Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader $xaml))
 
 $ui = @{}
 @(
-    'Root', 'DropZone', 'DropTitle', 'FileCount', 'BtnClearFiles', 'FilesPanel', 'ModePanel',
-    'NameBox', 'BtnSimulate', 'BtnInstall', 'HintText', 'DrivesPanel', 'DriveCount', 'StatSpace',
+    'Root', 'DropZone', 'DropTitle', 'FileCount', 'BtnClearFiles', 'FilesPanel', 'DeviceName',
+    'NameBox', 'BtnInstall', 'HintText', 'DrivesPanel', 'DriveCount', 'StatSpace',
     'StatGames', 'Bar', 'BarText', 'BarPct', 'BtnRefresh', 'GamesPanel', 'BtnCopyLog', 'LogBox',
     'LogHeader', 'LogBody', 'BtnLogToggle', 'BtnAuto',
     'StatusText', 'BusyDot', 'Toasts', 'Overlay', 'ConfirmTitle', 'ConfirmText', 'BtnCancelConfirm',
@@ -68,7 +68,8 @@ $S = @{
     Drive      = $null          # letra, ex. 'F'
     Drives     = @()
     Files      = New-Object System.Collections.ArrayList
-    Mode       = 'ul'
+    Mode       = 'ul'           # fixo: UL.* divide em pedaços de 1 GiB (serve para qualquer tamanho)
+    Hw         = @{}            # letra -> tipo/modelo do disco (pendrive, SSD, HD...)
     Games      = @()
     Busy       = $false
     Force      = $false
@@ -91,6 +92,7 @@ $S = @{
     Extract    = $null          # extração de .zip/.rar/.7z em andamento
     ExtractQueue = New-Object System.Collections.ArrayList
     TempRoots  = New-Object System.Collections.ArrayList
+    ResultUntil = [datetime]::MinValue   # mantém o resultado da cópia na barra por alguns segundos
 }
 
 $BRUSH = @{}
@@ -243,6 +245,92 @@ function Hide-Confirm {
 
 # ---------------------------------------------------------------- drives
 
+function Get-DiskHardware {
+    <#
+        Descobre o que é cada letra: pendrive, cartão SD, SSD, HD ou disco
+        externo — com modelo e barramento.
+
+        Fonte: Win32_DiskDrive (rápido, ~160 ms) + MSFT_PhysicalDisk, que é
+        quem diz se a mídia é SSD ou HD. Roda sem administrador e é só leitura.
+        Devolve uma tabela letra -> objeto.
+    #>
+    $map = @{}
+
+    try {
+        $disks = @{}
+        foreach ($d in @(Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction Stop)) {
+            $disks[[int]$d.Index] = $d
+        }
+
+        # disco -> partição -> letra (o DeviceID é o que liga as duas tabelas)
+        $partDisk = @{}
+        foreach ($a in @(Get-CimInstance -ClassName Win32_DiskDriveToDiskPartition -ErrorAction SilentlyContinue)) {
+            $m = [regex]::Match([string]$a.Antecedent.DeviceID, 'PHYSICALDRIVE(\d+)$')
+            if ($m.Success) { $partDisk[[string]$a.Dependent.DeviceID] = [int]$m.Groups[1].Value }
+        }
+
+        $media = @{}
+        try {
+            foreach ($p in @(Get-CimInstance -Namespace 'root\Microsoft\Windows\Storage' `
+                    -ClassName MSFT_PhysicalDisk -ErrorAction Stop)) {
+                $media[[int]$p.DeviceId] = $p
+            }
+        } catch { }
+
+        foreach ($a in @(Get-CimInstance -ClassName Win32_LogicalDiskToPartition -ErrorAction SilentlyContinue)) {
+            $letter = ([string]$a.Dependent.DeviceID).TrimEnd(':').ToUpperInvariant()
+            if ($letter.Length -ne 1) { continue }
+
+            $index = $partDisk[[string]$a.Antecedent.DeviceID]
+            if ($null -eq $index) { continue }
+
+            $d = $disks[$index]
+            $phys = $media[$index]
+
+            $model = ''
+            $busUsb = $false
+            $removable = $false
+            if ($d) {
+                $model = ([string]$d.Model).Trim()
+                $model = $model -replace '^USB\s+', '' -replace '\s+SCSI Disk Device$', ''
+                $removable = ([string]$d.MediaType -match 'Removable')
+                $busUsb = ([string]$d.InterfaceType -match 'USB')
+            }
+
+            $mediaType = 0
+            $busType = 0
+            if ($phys) {
+                $mediaType = [int]$phys.MediaType
+                $busType = [int]$phys.BusType
+                if (-not $model) { $model = ([string]$phys.FriendlyName).Trim() }
+            }
+
+            $kind = 'UNIDADE'
+            if ($removable) {
+                $kind = $(if ($busType -in 12, 13) { 'CARTÃO SD' } else { 'PENDRIVE' })
+            } elseif ($busType -eq 7 -or $busUsb) {
+                $kind = switch ($mediaType) { 4 { 'SSD EXTERNO' } 3 { 'HD EXTERNO' } default { 'HD/SSD USB' } }
+            } else {
+                $kind = switch ($mediaType) { 4 { 'SSD' } 3 { 'HD' } default { 'DISCO FIXO' } }
+            }
+
+            $map[$letter] = [pscustomobject]@{
+                Kind  = $kind
+                Model = $model
+                Bus   = $(switch ($busType) { 7 { 'USB' } 11 { 'SATA' } 17 { 'NVMe' } 12 { 'SD' } 13 { 'MMC' } default { '' } })
+                Media = $(switch ($mediaType) { 3 { 'HD' } 4 { 'SSD' } 5 { 'SCM' } default { '' } })
+            }
+        }
+    } catch { }
+
+    return $map
+}
+
+function Update-Hardware {
+    <# Reconsulta o hardware só quando a lista de letras mudou (hot-plug). #>
+    try { $S.Hw = Get-DiskHardware } catch { $S.Hw = @{} }
+}
+
 function Get-DriveList {
     $list = New-Object System.Collections.ArrayList
     foreach ($d in [IO.DriveInfo]::GetDrives()) {
@@ -250,6 +338,10 @@ function Get-DriveList {
         if ($d.DriveType -ne 'Removable' -and $d.DriveType -ne 'Fixed') { continue }
         $letter = $d.Name.Substring(0, 1)
         if ($letter -eq $env:SystemDrive.Substring(0, 1)) { continue }
+
+        $hw = $S.Hw[$letter]
+        if (-not $hw) { $hw = [pscustomobject]@{ Kind = $(if ($d.DriveType -eq 'Removable') { 'PENDRIVE' } else { 'DISCO FIXO' }); Model = ''; Bus = ''; Media = '' } }
+
         [void]$list.Add([pscustomobject]@{
             Letter = $letter
             Root   = $d.Name
@@ -258,6 +350,9 @@ function Get-DriveList {
             Free   = [double]$d.AvailableFreeSpace
             Total  = [double]$d.TotalSize
             Type   = [string]$d.DriveType
+            Kind   = $hw.Kind
+            Model  = $hw.Model
+            Bus    = $hw.Bus
         })
     }
     return @($list | Sort-Object @{ e = { $_.Type -ne 'Removable' } }, Letter)
@@ -301,8 +396,11 @@ function Update-DriveChips {
         $chip.Style = $win.FindResource('Chip')
         $chip.Tag = $d.Letter
         $chip.IsChecked = ($d.Letter -eq $S.Drive)
-        $chip.Content = ('{0}{1}: {2} GB' -f $(if ($d.Type -eq 'Removable') { '' } else { 'HD ' }), $d.Letter, [math]::Round($d.Free / 1GB, 0))
-        $chip.ToolTip = ('{0} · {1} · {2} livre de {3}{4}' -f $d.Label, $d.Format, (Format-Size $d.Free), (Format-Size $d.Total), $(if ($d.Type -eq 'Removable') { '' } else { ' · unidade fixa' }))
+        $chip.Content = ('{0}: {1}' -f $d.Letter, $d.Kind)
+        $chip.ToolTip = ('{0}: {1}`n{2}{3} · {4}`n{5} livres de {6}' -f
+            $d.Letter, $d.Kind,
+            $(if ($d.Model) { $d.Model + ' · ' } else { '' }), $d.Format, $d.Label,
+            (Format-Size $d.Free), (Format-Size $d.Total))
         $chip.Add_Click({
             param($sender, $e)
             $S.Drive = $sender.Tag
@@ -347,12 +445,17 @@ function Sync-Drives {
     if ($S.Busy) { return }   # não mexe na lista no meio de uma cópia
 
     $now = @(Get-DriveProbe)
-    if (($now -join ';') -eq (@($S.DriveProbe) -join ';')) { return }
+    if (($now -join ';') -eq (@($S.DriveProbe) -join ';')) {
+        # Nada entrou/saiu: só atualiza o espaço (usado/livre) em tempo real.
+        if (-not $S.Busy) { Update-Space }
+        return
+    }
     $S.DriveProbe = $now
 
     $before = @($S.Drives | ForEach-Object { $_.Letter })
     $selected = $S.Drive
 
+    Update-Hardware
     Update-DriveChips
     Load-Games
     Update-Space
@@ -384,21 +487,49 @@ function Sync-Drives {
     }
 }
 function Update-Space {
+    <#
+        Nome do dispositivo (pendrive, SSD, HD...), espaço usado e livre.
+        Chamado a cada segundo pelo timer: os números acompanham a cópia.
+    #>
     $ui.StatGames.Text = ('{0} JOGO(S)' -f $S.Games.Count).ToUpper()
+
     if (-not $S.Drive) {
+        $ui.DeviceName.Text = 'NENHUM DISPOSITIVO SELECIONADO'
+        $ui.DeviceName.Foreground = Br '#666666'
         $ui.StatSpace.Text = '—'
+        $ui.Bar.Value = 0
+        $ui.BarPct.Text = ''
         return
     }
+
+    $d = $S.Drives | Where-Object { $_.Letter -eq $S.Drive } | Select-Object -First 1
+    $kind = if ($d) { $d.Kind } else { 'UNIDADE' }
+    $model = if ($d) { $d.Model } else { '' }
+    $fmt = if ($d) { $d.Format } else { '' }
+    $label = if ($d) { $d.Label } else { '' }
+
+    $parts = @("$($S.Drive): $kind")
+    if ($model) { $parts += $model }
+    if ($fmt) { $parts += $fmt }
+    if ($label) { $parts += $label }
+    $ui.DeviceName.Text = ($parts -join ' · ')
+    $ui.DeviceName.Foreground = Br '#8BE9FD'
+
     try {
         $di = New-Object IO.DriveInfo("$($S.Drive):\")
-        $ui.StatSpace.Text = ('{0} LIVRES DE {1}' -f (Format-Size $di.AvailableFreeSpace), (Format-Size $di.TotalSize))
+        $total = [double]$di.TotalSize
+        $free = [double]$di.AvailableFreeSpace
+        $used = [Math]::Max([double]0, ($total - $free))
 
-        if (-not $S.Busy) {
-            $used = 0
-            if ($di.TotalSize -gt 0) { $used = [int](100 * ($di.TotalSize - $di.AvailableFreeSpace) / $di.TotalSize) }
-            $ui.Bar.Value = $used
-            $ui.BarPct.Text = ('{0}%' -f $used)
-            $ui.BarText.Text = 'USO DO PENDRIVE'
+        $ui.StatSpace.Text = ('USADO {0} DE {1} · LIVRE {2}' -f
+            (Format-Size $used), (Format-Size $total), (Format-Size $free))
+
+        if (-not $S.Busy -and (Get-Date) -ge $S.ResultUntil) {
+            $pct = 0
+            if ($total -gt 0) { $pct = [int][Math]::Round(100 * $used / $total) }
+            $ui.Bar.Value = $pct
+            $ui.BarPct.Text = ('{0}%' -f $pct)
+            $ui.BarText.Text = 'USO DO DISPOSITIVO'
         }
     } catch {
         $ui.StatSpace.Text = 'ERRO AO LER A UNIDADE'
@@ -1160,13 +1291,14 @@ function Get-LibraryRows {
         }
     }
 
-    # Jogos soltos encontrados na unidade (inclui os do modo DVD)
+    # Jogos soltos encontrados na unidade (inclui os do modo DVD e os compactados)
     $dvd = @($S.Games | Where-Object { $_.Tipo -eq 'dvd' } | ForEach-Object { $_.Path })
     foreach ($it in @($S.Lib)) {
         [void]$rows.Add([pscustomobject]@{
             Platform = $it.Platform; Label = $it.PlatformLabel; Name = $it.Name
             Rel = $it.Rel; Size = $it.Size; SizeText = (Format-Size $it.Size)
             Instalado = ($dvd -contains $it.File); File = $it.File; Serial = $it.Serial
+            Container = ($it.Kind -eq 'archive'); Inner = $it.Inner; InnerCount = $it.InnerCount
         })
     }
 
@@ -1183,7 +1315,7 @@ function Render-Library {
         if (-not $S.Drive) {
             Show-LibraryMessage 'SELECIONE UMA UNIDADE'
         } else {
-            Show-LibraryMessage ("NENHUM JOGO ENCONTRADO EM {0}:`n`nFormatos reconhecidos: PS2 .iso · PS1 .bin/.cue/.chd`nSNES .sfc · N64 .n64 · GBA .gba · NDS .nds · GC .gcm" -f $S.Drive)
+            Show-LibraryMessage ("NENHUM JOGO ENCONTRADO EM {0}:`n`nFormatos reconhecidos: PS2 .iso · PS1 .bin/.cue/.chd`nSNES .sfc · N64 .n64 · GBA .gba · NDS .nds · GC .gcm`nCompactados .zip .rar .7z também são abertos para ver o jogo de dentro" -f $S.Drive)
         }
         return
     }
@@ -1289,7 +1421,7 @@ function Render-Library {
             $act.Style = $win.FindResource('BtnTiny')
             $act.Content = '+'
             $act.Tag = $r
-            $act.ToolTip = 'Adicionar à lista de instalação'
+            $act.ToolTip = $(if ($r.Container) { 'Extrair o arquivo e instalar' } else { 'Adicionar à lista de instalação' })
             $act.Add_Click({ param($sender, $e) Add-LibraryGame $sender.Tag })
         } else {
             $act = New-Object Windows.Controls.TextBlock
@@ -1322,6 +1454,17 @@ function Add-LibraryGame {
         return
     }
     if (-not $Item.File) { return }
+
+    if ($Item.Container) {
+        # Compactado: extrai em segundo plano e instala (se o auto-instalar estiver ligado).
+        $before = $S.Files.Count
+        Add-DroppedFiles -Files @($Item.File) -Auto
+        if ($S.Extract -or $S.Files.Count -gt $before) {
+            Show-Toast 'Extraindo e instalando' $Item.Name 'ok'
+            Set-Status 'EXTRAINDO...' '#F1FA8C'
+        }
+        return
+    }
 
     $before = $S.Files.Count
     Add-IsoFile $Item.File
@@ -1414,7 +1557,6 @@ function Start-Worker {
 function Set-Busy {
     param([bool]$Busy)
     $ui.BtnInstall.IsEnabled = -not $Busy
-    $ui.BtnSimulate.IsEnabled = -not $Busy
     $ui.BtnRefresh.IsEnabled = -not $Busy
     $ui.BtnClearFiles.IsEnabled = -not $Busy
     $ui.DropZone.IsEnabled = -not $Busy
@@ -1485,14 +1627,16 @@ function Update-Worker {
             $ui.BarPct.Text = '100%'
             $ui.BarText.Text = 'CONCLUÍDO'
         }
+
+        # Mantém o resultado na barra por alguns segundos antes de voltar a
+        # mostrar o uso do disco (o timer de 1 s não apaga o "CONCLUÍDO").
+        $S.ResultUntil = (Get-Date).AddSeconds(6)
     }
 }
 
 # ---------------------------------------------------------------- instalar
 
 function Start-Install {
-    param([switch]$Simulate)
-
     if ($S.Busy) { return }
     if ($S.Extract) { return }
     if (-not $S.Drive) { Show-Toast 'Sem pendrive' 'Selecione uma unidade acima.' 'error'; return }
@@ -1520,12 +1664,7 @@ function Start-Install {
             return
         }
 
-        $mode = $S.Mode
-        if ($mode -eq 'dvd' -and $f.Size -ge (4GB - 1MB)) {
-            Show-Toast 'Não cabe na pasta DVD' ("{0} tem {1}. Use o modo UL.*." -f $f.Name, (Format-Size $f.Size)) 'error'
-            return
-        }
-
+        $mode = 'ul'   # sempre UL.*: divide em 1 GiB e aceita ISO de qualquer tamanho
         $media = if ($f.Size -gt 700MB) { 0x14 } else { 0x12 }
 
         [void]$jobs.Add([pscustomobject]@{
@@ -1547,34 +1686,17 @@ function Start-Install {
         return
     }
 
-    if ($Simulate) {
-        Add-Log ('SIMULAÇÃO — nada será gravado. Destino: {0}' -f $root) 'warn'
-        foreach ($j in $jobs) {
-            if ($j.Mode -eq 'dvd') {
-                Add-Log ("{0} -> DVD\{0}.iso ({1})" -f $j.Name, (Format-Size ($S.Files | Where-Object { $_.Path -eq $j.Iso }).Size)) 'info'
-            } else {
-                $size = ($S.Files | Where-Object { $_.Path -eq $j.Iso }).Size
-                $parts = [int][Math]::Ceiling($size / 1GB)
-                Add-Log ("{0} [{1}] -> {2} pedaço(s) de 1 GiB" -f $j.Name, $j.Serial, $parts) 'info'
-                Add-Log ("  {0}" -f (Get-UlPartName $j.Name $j.Serial 0)) 'dim'
-            }
-        }
-        Add-Log ('Total: {0} em {1} arquivo(s).' -f (Format-Size $totalBytes), $jobs.Count) 'ok'
-        Show-Toast 'Simulação concluída' 'Plano gerado no log. Nada foi gravado.' 'info'
-        return
-    }
-
-    # duplicados?
+    # duplicados? (mesmo serial já instalado no OPL, ou o mesmo jogo já em DVD\)
     $dups = @()
     $existing = @(Read-UlEntries $root)
     foreach ($j in $jobs) {
-        if ($j.Mode -eq 'ul') {
-            $hit = $existing | Where-Object { $_.Serial -eq $j.Serial } | Select-Object -First 1
-            if ($hit) { $dups += ('{0} (já instalado como "{1}")' -f $j.Name, $hit.Nome) }
-        } else {
-            $dvdPath = Join-Path (Join-Path $root 'DVD') ($j.Name + '.iso')
-            if (Test-Path -LiteralPath $dvdPath) { $dups += ('{0} (já existe em DVD\{0}.iso)' -f $j.Name) }
+        $hit = $existing | Where-Object { $_.Serial -eq $j.Serial } | Select-Object -First 1
+        if ($hit) {
+            $dups += ('{0} (já instalado como "{1}")' -f $j.Name, $hit.Nome)
+            continue
         }
+        $dvd = $S.Games | Where-Object { $_.Tipo -eq 'dvd' -and $_.Serial -eq $j.Serial } | Select-Object -First 1
+        if ($dvd) { $dups += ('{0} (já existe em DVD\{1}.iso)' -f $j.Name, $dvd.Nome) }
     }
 
     if ($dups.Count -gt 0) {
@@ -1683,7 +1805,6 @@ $ui.BtnMax.Add_Click({
 })
 
 $ui.BtnInstall.Add_Click({ Start-Install })
-$ui.BtnSimulate.Add_Click({ Start-Install -Simulate })
 
 $ui.BtnRefresh.Add_MouseLeftButtonUp({
     Update-DriveChips
@@ -1782,27 +1903,6 @@ $win.Add_KeyDown({
 
 # ---------------------------------------------------------------- boot
 
-function Initialize-Modes {
-    $modes = @(
-        @{ Id = 'ul';  Label = 'UL.* (1 GIB)'; Tip = 'Divide o ISO em pedaços de 1 GiB — aceita qualquer tamanho' },
-        @{ Id = 'dvd'; Label = 'DVD (ISO < 4 GB)'; Tip = 'Copia o ISO inteiro para a pasta DVD — só abaixo de 4 GB' }
-    )
-    foreach ($m in $modes) {
-        $chip = New-Object Windows.Controls.Primitives.ToggleButton
-        $chip.Style = $win.FindResource('Chip')
-        $chip.Content = $m.Label
-        $chip.Tag = $m.Id
-        $chip.ToolTip = $m.Tip
-        $chip.IsChecked = ($m.Id -eq $S.Mode)
-        $chip.Add_Click({
-            param($sender, $e)
-            $S.Mode = $sender.Tag
-            foreach ($c in $ui.ModePanel.Children) { $c.IsChecked = ($c.Tag -eq $S.Mode) }
-        })
-        [void]$ui.ModePanel.Children.Add($chip)
-    }
-}
-
 # A versão vem do CHANGELOG (um lugar só para lembrar de atualizar).
 try {
     $cl = Join-Path $repoRoot 'CHANGELOG.md'
@@ -1825,14 +1925,13 @@ try {
 Add-Log 'EASYROMS::OPL — motor ul.* carregado' 'ok'
 Add-Log ('CRC de referência: {0} (GTA) · {1} (Medalha)' -f ('{0:X8}' -f (Get-UsbaCrc32 'GTA - San Andreas')), ('{0:X8}' -f (Get-UsbaCrc32 'Medalha de Honra'))) 'dim'
 
-Initialize-Modes
-
 if ($Drive) {
     $S.Drive = $Drive.TrimEnd(':', '\').ToUpper()
 }
 
 Initialize-GamesTabs
 
+Update-Hardware
 Update-DriveChips
 Load-Games
 Render-Files

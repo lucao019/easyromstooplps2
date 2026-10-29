@@ -178,7 +178,10 @@ try {
     Assert-Equal $S.Drives.Count $ui.DrivesPanel.Children.Count 'um chip por unidade'
     Assert-True ($S.Drive -eq 'F' -or $S.Drive -eq $letter -or $S.Drive) "unidade selecionada ($($S.Drive):)"
     Assert-Equal 0 $S.Files.Count 'nenhum arquivo no início'
-    Assert-Equal 'ul' $S.Mode 'modo padrão é ul'
+    Assert-True ([string]$ui.DeviceName.Text -match ('^{0}: ' -f $S.Drive)) "painel nomeia o dispositivo ($($ui.DeviceName.Text))"
+    Assert-True ([string]$ui.DeviceName.Text -match 'PENDRIVE|CARTÃO|SSD|HD|DISCO|UNIDADE') 'painel diz o tipo (pendrive, SSD, HD...)'
+    Assert-True ([string]$ui.StatSpace.Text -match '^USADO .+ DE .+ · LIVRE .+$') "painel mostra usado/livre ($($ui.StatSpace.Text))"
+    Assert-True ($ui.BarPct.Text -match '^\d+%$') 'painel mostra a porcentagem usada'
     Assert-True ([bool]$ui.BtnAuto.IsChecked) 'auto-instalar ligado por padrão'
     Assert-True $S.AutoInstall 'estado do auto-instalar acompanha o botão'
     Assert-Equal 'Collapsed' ([string]$ui.LogBody.Visibility) 'log começa fechado'
@@ -205,25 +208,29 @@ try {
         $tested++
         Assert-Equal $tag $S.Drive "clique no chip $tag seleciona $tag ($([int]$sw.Elapsed.TotalMilliseconds) ms)"
         Assert-True ($chip.IsChecked -or ($S.Drive -eq $tag)) "chip $tag ficou marcado"
+        Assert-True ([string]$ui.DeviceName.Text -match ('^{0}: ' -f $tag)) "painel acompanha o chip $tag"
     }
     Assert-True ($tested -ge 2) "cliquei em $tested unidades"
     Assert-Equal 'library' $S.LibView 'clique na unidade abre a biblioteca'
 
-    # ============================================================ 3. modos
+    # ============================================================ 3. painel do dispositivo
     Write-Host ''
-    Write-Host '3. Chips de modo' -ForegroundColor Cyan
+    Write-Host '3. Painel do dispositivo (tipo, usado, livre) em tempo real' -ForegroundColor Cyan
 
-    $modes = @($ui.ModePanel.Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] })
-    Assert-Equal 2 $modes.Count 'dois modos (ul e dvd)'
+    $S.Drive = $letter
+    Update-DriveChips
+    Update-Space
+    Assert-True ([string]$ui.DeviceName.Text -match ('^{0}: ' -f $letter)) "painel nomeia ${letter}: ($($ui.DeviceName.Text))"
+    Assert-True ([string]$ui.StatSpace.Text -match '^USADO ') 'painel mostra o espaço usado'
 
-    foreach ($chip in $modes) {
-        Click $chip "modo-$($chip.Tag)"
-        Assert-Equal $chip.Tag $S.Mode "clique no modo $($chip.Tag) muda o modo"
-        $checked = @($modes | Where-Object { $_.IsChecked })
-        Assert-Equal 1 $checked.Count 'só um modo marcado por vez'
-    }
-    Click ($modes | Where-Object { $_.Tag -eq 'ul' }) 'modo-ul'
-    Assert-Equal 'ul' $S.Mode 'voltou para ul'
+    # espaço muda sem clicar em nada: o timer de 1 s relê a unidade
+    $spaceBefore = [string]$ui.StatSpace.Text
+    [IO.File]::WriteAllBytes("${letter}:\espaco-teste.bin", (New-Object byte[] (16MB)))
+    $deadline = (Get-Date).AddSeconds(10)
+    while ([string]$ui.StatSpace.Text -eq $spaceBefore -and (Get-Date) -lt $deadline) { Pump 250 }
+    Assert-True ([string]$ui.StatSpace.Text -ne $spaceBefore) 'usado/livre mudou sozinho (tempo real)'
+    Remove-Item -LiteralPath "${letter}:\espaco-teste.bin" -Force
+    Pump 1300
 
     # auto-instalar e log: dois controles novos, um clique em cada.
     # O clique do teste levanta o evento direto, sem passar pelo ToggleButton,
@@ -243,7 +250,7 @@ try {
 
     # ============================================================ 4. botões sem arquivo
     Write-Host ''
-    Write-Host '4. INSTALAR / SIMULAR sem arquivo (tem que avisar, não quebrar)' -ForegroundColor Cyan
+    Write-Host '4. INSTALAR sem arquivo (tem que avisar, não quebrar)' -ForegroundColor Cyan
 
     # Trava de segurança: a partir daqui nunca deixamos a unidade apontar para
     # um disco real. Se algo falhar, o teste morre em vez de gravar no pendrive.
@@ -258,9 +265,6 @@ try {
     Click $ui.BtnInstall 'BtnInstall'
     Assert-Equal 'Collapsed' $ui.Overlay.Visibility 'INSTALAR sem arquivo não abre confirmação'
     Assert-True ($ui.Toasts.Children.Count -gt 0) 'INSTALAR sem arquivo mostra aviso'
-
-    Click $ui.BtnSimulate 'BtnSimulate'
-    Assert-Equal 'Collapsed' $ui.Overlay.Visibility 'SIMULAR sem arquivo não abre confirmação'
     Assert-True (-not $S.Busy) 'nada ficou travado como ocupado'
 
     # o ✕ do aviso fecha só aquele aviso
@@ -297,9 +301,9 @@ try {
     Add-DroppedFiles -Files @($null, '', $isoFile.FullName)
     Assert-Equal 1 $S.Files.Count 'entradas nulas/vazias não quebram'
 
-    # ============================================================ 6. limpar e simular
+    # ============================================================ 6. limpar lista
     Write-Host ''
-    Write-Host '6. Limpar lista e SIMULAR' -ForegroundColor Cyan
+    Write-Host '6. Limpar lista' -ForegroundColor Cyan
 
     Click $ui.BtnClearFiles 'BtnClearFiles'
     Assert-Equal 0 $S.Files.Count 'LIMPAR LISTA esvazia'
@@ -307,13 +311,9 @@ try {
     Assert-Equal 0 $ui.FilesPanel.Children.Count 'lista visual vazia'
 
     Add-DroppedFiles -Files @($isoFile.FullName)
-    $logBefore = (Get-LogText).Length
-    Click $ui.BtnSimulate 'BtnSimulate'
-    $logAfter = Get-LogText
-    Assert-True ($logAfter.Length -gt $logBefore) 'SIMULAR escreve no log'
-    Assert-True ($logAfter -match 'SIMULA') 'log diz que é simulação'
-    Assert-True (-not $S.Busy) 'SIMULAR não inicia cópia'
-    Assert-Equal 0 @(Get-ChildItem "${letter}:\ul.*" -File).Count 'SIMULAR não gravou nada'
+    Assert-Equal 1 $S.Files.Count 'volta a aceitar o ISO'
+    Assert-True ((Get-LogText) -match 'Medalha') 'log registra o ISO lido'
+    Assert-Equal 0 @(Get-ChildItem "${letter}:\ul.*" -File).Count 'nada foi gravado ainda'
 
     # ============================================================ 7. instalar de verdade
     Write-Host ''
@@ -658,7 +658,80 @@ try {
     } else {
         Write-Host '  (WinRAR ausente: teste de RAR pulado)' -ForegroundColor DarkGray
     }
-# ============================================================ 14. nenhum erro de handler
+    # ============================================================ 13c. biblioteca lê compactados
+    Write-Host ''
+    Write-Host '13c. Biblioteca: ZIP/RAR/7Z mostram o jogo de dentro' -ForegroundColor Cyan
+
+    $ui.BtnAuto.IsChecked = $false
+    $S.AutoInstall = $false
+
+    $bibSrc = Join-Path $work 'bib'
+    New-Item -ItemType Directory -Force $bibSrc | Out-Null
+    $bibIso = Join-Path $bibSrc 'Jogo Bib (SLUS_215.96).iso'
+    New-TestPs2Iso -Path $bibIso -Serial 'SLUS_215.96'
+    # bytes aleatórios: sem isso o ISO de teste comprime para poucos bytes e
+    # o filtro de "arquivo pequeno demais" esconderia o compactado
+    $rand = New-Object byte[] 300000
+    (New-Object Random 7).NextBytes($rand)
+    [IO.File]::WriteAllBytes($bibIso, [byte[]]([IO.File]::ReadAllBytes($bibIso) + $rand))
+
+    $archDir = "${letter}:\Arquivos"
+    New-Item -ItemType Directory -Force $archDir | Out-Null
+    [IO.Compression.ZipFile]::CreateFromDirectory($bibSrc, (Join-Path $archDir 'Jogo Bib.zip'))
+
+    $rarOnDrive = Join-Path $archDir 'Jogo Bib.rar'
+    $rarExe = 'C:\Program Files\WinRAR\Rar.exe'
+    $hasRar = Test-Path -LiteralPath $rarExe
+    if ($hasRar) {
+        & $rarExe a -idq -ep1 $rarOnDrive $bibIso
+        $hasRar = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $rarOnDrive)
+    }
+
+    $sevenOnDrive = Join-Path $archDir 'Jogo Bib.7z'
+    & tar.exe -cf $sevenOnDrive --format 7zip -C $bibSrc 'Jogo Bib (SLUS_215.96).iso' 2>$null
+    $has7z = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $sevenOnDrive)
+
+    Refresh-Library
+    $deadline = (Get-Date).AddSeconds(40)
+    while ((Get-Date) -lt $deadline -and $ui.LibraryInfo.Text -match 'VARRENDO') { Pump 250 }
+    Pump 400
+
+    $arch = @($S.Lib | Where-Object { $_.Kind -eq 'archive' })
+    Assert-True ($arch.Count -ge 1) "biblioteca listou compactados ($($arch.Count))"
+    Assert-True ($S.LibReport.ArchiveChecked -ge 1) 'o compactado foi aberto (só o índice)'
+
+    $zipRow = $arch | Where-Object { $_.Ext -eq '.zip' } | Select-Object -First 1
+    Assert-True ($null -ne $zipRow) 'ZIP aparece na biblioteca'
+    Assert-Equal 'PS2' $zipRow.Platform 'ZIP com ISO de PS2 é classificado como PS2'
+    Assert-Equal 'SLUS_215.96' $zipRow.Serial 'serial veio do nome do ISO dentro do ZIP'
+    Assert-True ($zipRow.Rel -match 'dentro') 'a linha diz o que tem dentro do arquivo'
+
+    if ($hasRar) {
+        $rarRow = $arch | Where-Object { $_.Ext -eq '.rar' } | Select-Object -First 1
+        Assert-True ($null -ne $rarRow) 'RAR aparece na biblioteca'
+        Assert-Equal 'Jogo Bib (SLUS_215.96).iso' $rarRow.Inner 'RAR aponta o ISO de dentro'
+    }
+    if ($has7z) {
+        $sevenRow = $arch | Where-Object { $_.Ext -eq '.7z' } | Select-Object -First 1
+        Assert-True ($null -ne $sevenRow) '7Z aparece na biblioteca'
+    }
+
+    $zipPath = Join-Path $archDir 'Jogo Bib.zip'
+    $zipLine = $ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.File -eq $zipPath } | Select-Object -First 1
+    Assert-True ($null -ne $zipLine) 'linha do ZIP desenhada'
+    $zipPlus = $zipLine.Child.Children | Where-Object { $_ -is [Windows.Controls.Button] } | Select-Object -First 1
+    Assert-True ($null -ne $zipPlus) 'botão + no ZIP'
+
+    Click $zipPlus 'botão + do ZIP da biblioteca'
+    Wait-Idle
+    Pump 300
+    Assert-Equal 1 $S.Files.Count 'ZIP da biblioteca foi extraído para a lista'
+    Assert-True ($S.TempRoots.Count -ge 1) 'temporário da extração existe enquanto o jogo não foi instalado'
+    $S.Files.Clear()
+    Render-Files
+    foreach ($t in @($S.TempRoots)) { Remove-TempRoot $t }
+
+    # ============================================================ 14. nenhum erro de handler
     Write-Host ''
     Write-Host '14. Nenhum handler lançou exceção' -ForegroundColor Cyan
 

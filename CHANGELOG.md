@@ -4,6 +4,36 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.6.0] — 2026-10-29
+
+### Adicionado
+
+- **Painel DISPOSITIVO.** Ao selecionar uma unidade, o app diz o que ela é e quanto
+  cabe: `F: PENDRIVE · SanDisk 3.2Gen1 · FAT32 · 64 GB`, com **usado / total / livre**
+  e a barra de ocupação. O tipo vem do hardware de verdade — `Win32_DiskDrive` diz o
+  modelo e o barramento (USB/SATA/NVMe) e `MSFT_PhysicalDisk` diz se a mídia é HD ou
+  SSD — então aparece `PENDRIVE`, `CARTÃO SD`, `SSD`, `HD`, `SSD EXTERNO`…, não um
+  "removível" genérico.
+- **Espaço em tempo real.** O mesmo timer de 1 s que detecta hot-plug relê
+  usado/livre: os números andam sozinhos durante a cópia, sem clicar em RECARREGAR.
+  O resultado da operação (`CONCLUÍDO`, `CANCELADO`) fica 6 s na barra antes de voltar
+  a mostrar a ocupação.
+- **Compactados na biblioteca.** `.zip`, `.rar` (inclusive multi-volume) e `.7z`
+  agora aparecem na aba **BIBLIOTECA** com o que têm dentro
+  (`Jogo.zip · 1 jogo(s) dentro · Jogo.iso`), o serial lido do nome do ISO interno e
+  o botão **+** para extrair e instalar. Só o índice é lido — nada é extraído só para
+  listar. O `.partN.rar` de continuação não vira linha duplicada.
+- **Chips com o tipo da unidade:** `F: PENDRIVE`, `E: SSD`, `H: HD`.
+
+### Alterado
+
+- **Saiu o "MODO DE INSTALAÇÃO" e o "SIMULAR".** O app grava sempre em `ul.*` (divide
+  em 1 GiB, aceita ISO de qualquer tamanho), então a escolha não tinha por que existir
+  — e uma escolha a menos é uma chance a menos de errar. A coluna esquerda ficou com
+  duas etapas: o jogo e o nome no menu; **INSTALAR NO PENDRIVE** ocupa a largura toda.
+- Testes: **162 asserções de UI** (painel do dispositivo com mudança real de espaço,
+  ZIP/RAR/7Z na biblioteca e **+** no ZIP) e **199 no total**.
+
 ## [1.5.0] — 2026-10-29
 
 ### Adicionado

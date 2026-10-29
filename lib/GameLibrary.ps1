@@ -37,6 +37,9 @@ $script:GameExt = @{
     '.gdi' = 'DC'; '.cdi' = 'DC'
 }
 
+# Arquivos compactados: o jogo pode estar dentro deles (é como os dumps vêm).
+$script:ArchiveExt = @('.zip', '.rar', '.7z')
+
 # Pastas que nunca têm jogo (lixo do Windows ou estrutura do próprio OPL).
 $script:GameSkipDirs = @(
     '$RECYCLE.BIN', 'SYSTEM VOLUME INFORMATION', '.GIT', 'NODE_MODULES',
@@ -60,6 +63,7 @@ function Get-GamePlatformLabel {
         'NES'    { return 'NES' }
         'PSP'    { return 'PSP' }
         'DC'     { return 'DC' }
+        'ARQ'    { return 'ARQUIVO' }
         default  { return 'ISO' }
     }
 }
@@ -99,6 +103,114 @@ function Get-GameSerialFromName {
     return $null
 }
 
+function Get-ArchiveExe {
+    <#
+        Programa que lista/extrai o compactado. ZIP é nativo; RAR precisa do
+        UnRAR (vem com o WinRAR); 7Z usa o 7-Zip ou o tar do Windows.
+    #>
+    param([string]$Kind)
+
+    $pf86 = ${env:ProgramFiles(x86)}
+
+    if ($Kind -eq 'unrar') {
+        foreach ($p in @(
+                (Join-Path $env:ProgramFiles 'WinRAR\UnRAR.exe'),
+                $(if ($pf86) { Join-Path $pf86 'WinRAR\UnRAR.exe' })
+            )) {
+            if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+        }
+        return $null
+    }
+
+    if ($Kind -eq '7z') {
+        foreach ($p in @(
+                (Join-Path $env:ProgramFiles '7-Zip\7z.exe'),
+                $(if ($pf86) { Join-Path $pf86 '7-Zip\7z.exe' })
+            )) {
+            if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+        }
+    }
+
+    if ($Kind -eq 'tar') {
+        $t = Get-Command tar.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($t) { return $t.Source }
+    }
+
+    return $null
+}
+
+function Test-ArchiveContinuation {
+    <#
+        "Jogo.part2.rar" e "Jogo.r01" são pedaços do mesmo arquivo: só o
+        primeiro volume é lido, senão o jogo apareceria várias vezes.
+    #>
+    param([string]$Path)
+
+    $name = [IO.Path]::GetFileName($Path)
+    if ($name -match '(?i)\.part(\d+)\.rar$' -and [int]$Matches[1] -gt 1) { return $true }
+    return $false
+}
+
+function Get-ArchiveEntries {
+    <#
+        Lista os nomes dos arquivos dentro do compactado, sem extrair nada.
+        Devolve Ok/Entries/Error. Nunca lança: um arquivo corrompido só
+        devolve Ok = $false.
+    #>
+    param([string]$Path)
+
+    $ext = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+    $names = New-Object System.Collections.ArrayList
+
+    try {
+        switch ($ext) {
+            '.zip' {
+                Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+                $zip = [IO.Compression.ZipFile]::OpenRead($Path)
+                try {
+                    foreach ($e in $zip.Entries) {
+                        if (-not $e.FullName.EndsWith('/')) { [void]$names.Add($e.FullName) }
+                    }
+                } finally { $zip.Dispose() }
+            }
+            '.rar' {
+                $exe = Get-ArchiveExe 'unrar'
+                if (-not $exe) { return [pscustomobject]@{ Ok = $false; Entries = @(); Error = 'UnRAR não encontrado' } }
+                $out = & $exe 'lb' $Path 2>$null
+                if ($LASTEXITCODE -ne 0) { throw ('UnRAR saiu com código {0}' -f $LASTEXITCODE) }
+                foreach ($l in @($out)) {
+                    $s = ([string]$l).Trim()
+                    if ($s) { [void]$names.Add($s) }
+                }
+            }
+            '.7z' {
+                $tar = Get-ArchiveExe 'tar'
+                $out = $null
+                if ($tar) {
+                    $out = & $tar '-tf' $Path 2>$null
+                    if ($LASTEXITCODE -ne 0) { $out = $null }
+                }
+                if ($null -eq $out) {
+                    $exe = Get-ArchiveExe '7z'
+                    if (-not $exe) { return [pscustomobject]@{ Ok = $false; Entries = @(); Error = 'sem 7-Zip nem tar' } }
+                    $raw = & $exe 'l' '-slt' $Path 2>$null
+                    if ($LASTEXITCODE -ne 0) { throw ('7-Zip saiu com código {0}' -f $LASTEXITCODE) }
+                    $out = @($raw | Where-Object { $_ -match '^Path = ' } | ForEach-Object { $_.Substring(7) } | Select-Object -Skip 1)
+                }
+                foreach ($l in @($out)) {
+                    $s = ([string]$l).Trim()
+                    if ($s) { [void]$names.Add($s) }
+                }
+            }
+            default { return [pscustomobject]@{ Ok = $false; Entries = @(); Error = 'formato não suportado' } }
+        }
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Entries = @(); Error = $_.Exception.Message }
+    }
+
+    return [pscustomobject]@{ Ok = $true; Entries = @($names); Error = '' }
+}
+
 function Get-GameLibrary {
     <#
         .SYNOPSIS
@@ -118,6 +230,10 @@ function Get-GameLibrary {
             Quantos .iso podem ser abertos para confirmar se são de PS2
             (padrão 60). Os demais são classificados pelo nome/pasta.
 
+        .PARAMETER MaxArchiveChecks
+            Quantos .zip/.rar/.7z podem ser abertos para ver o que têm dentro
+            (padrão 40). Só o índice é lido: nada é extraído.
+
         .PARAMETER NoIsoInspection
             Não abre nenhum .iso (só nome/pasta). Mais rápido, menos preciso.
 
@@ -130,6 +246,7 @@ function Get-GameLibrary {
         [int]$MaxDepth = 4,
         [int]$Limit = 800,
         [int]$MaxIsoChecks = 60,
+        [int]$MaxArchiveChecks = 40,
         [switch]$NoIsoInspection,
         [switch]$Report
     )
@@ -138,6 +255,7 @@ function Get-GameLibrary {
     if (-not $rootFull.EndsWith('\')) { $rootFull += '\' }
 
     $found = New-Object System.Collections.ArrayList
+    $archives = New-Object System.Collections.ArrayList
     $queue = New-Object System.Collections.Queue
     $queue.Enqueue([pscustomobject]@{ Path = $rootFull; Depth = 0 })
 
@@ -168,6 +286,18 @@ function Get-GameLibrary {
             if ($found.Count -ge $Limit) { $truncated = $true; break }
 
             $ext = [IO.Path]::GetExtension($f).ToLowerInvariant()
+
+            if ($script:ArchiveExt -contains $ext) {
+                # .zip/.rar/.7z: o jogo pode estar dentro. Lido depois da varredura.
+                if (-not (Test-ArchiveContinuation $f)) {
+                    try {
+                        $afi = New-Object IO.FileInfo($f)
+                        if ($afi.Length -ge 4096) { [void]$archives.Add($afi) }
+                    } catch { }
+                }
+                continue
+            }
+
             $platform = $script:GameExt[$ext]
             if (-not $platform) { continue }
 
@@ -223,6 +353,64 @@ function Get-GameLibrary {
         }
     }
 
+    # Compactados: abre só o índice (nada é extraído) e vê se há jogo dentro.
+    $archChecked = 0
+    foreach ($afi in $archives) {
+        if ($found.Count -ge $Limit) { $truncated = $true; break }
+        if ($archChecked -ge $MaxArchiveChecks) { break }
+        $archChecked++
+
+        $list = Get-ArchiveEntries -Path $afi.FullName
+        $inner = $null
+        $innerPlatform = $null
+        $innerCount = 0
+
+        if ($list.Ok) {
+            foreach ($e in @($list.Entries)) {
+                $iext = [IO.Path]::GetExtension($e).ToLowerInvariant()
+                $ip = $script:GameExt[$iext]
+                if (-not $ip) { continue }
+                if ($iext -in '.bin', '.cue', '.ccd', '.mds', '.img', '.mdf') { continue }
+                if ($ip -eq 'ISO') { $ip = 'PS2' }   # ISO dentro de arquivo: caso real é PS2
+                $innerCount++
+                if (-not $inner) {
+                    $inner = [IO.Path]::GetFileName($e)
+                    $innerPlatform = $ip
+                }
+            }
+            if (-not $inner) { continue }   # compactado sem jogo: não polui a lista
+        } else {
+            $innerPlatform = 'ARQ'
+        }
+
+        $serial = $null
+        if ($inner) { $serial = Get-GameSerialFromName ([IO.Path]::GetFileNameWithoutExtension($inner)) }
+        if (-not $serial) { $serial = Get-GameSerialFromName $afi.BaseName }
+
+        $rel = $afi.FullName.Substring($rootFull.Length)
+        if ($list.Ok) {
+            $rel = ('{0} · {1} jogo(s) dentro · {2}' -f $rel, $innerCount, $inner)
+        } else {
+            $rel = ('{0} · NÃO CONSEGUI LER O CONTEÚDO' -f $rel)
+        }
+
+        [void]$found.Add([pscustomobject]@{
+            # "Jogo.part1" é só o primeiro pedaço: no menu vale "Jogo".
+            Name          = ($afi.BaseName -replace '(?i)\.part\d+$', '')
+            File          = $afi.FullName
+            Rel           = $rel
+            Dir           = $afi.DirectoryName
+            Ext           = ([IO.Path]::GetExtension($afi.FullName)).ToLowerInvariant()
+            Size          = [double]$afi.Length
+            Platform      = $innerPlatform
+            PlatformLabel = (Get-GamePlatformLabel $innerPlatform)
+            Serial        = $serial
+            Kind          = 'archive'
+            Inner         = $inner
+            InnerCount    = $innerCount
+        })
+    }
+
     # .cue+.bin (e .ccd+.img, .mds+.mdf) são o mesmo jogo: fica só a "capa".
     $covers = @{}
     foreach ($it in $found) {
@@ -248,6 +436,7 @@ function Get-GameLibrary {
             Folders    = $folders
             Truncated  = $truncated
             IsoChecked = $isoChecks
+            ArchiveChecked = $archChecked
         }
     }
 

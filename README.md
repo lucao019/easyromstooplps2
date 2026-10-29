@@ -6,7 +6,7 @@
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![PS2](https://img.shields.io/badge/PlayStation%202-OPL%20USB-003791?logo=playstation&logoColor=white)
 ![GUI](https://img.shields.io/badge/interface-WPF%20nativa-8BE9FD)
-![Testes](https://img.shields.io/badge/testes-184%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-199%20passando-brightgreen)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 
 **Interface gráfica** (arrastar e soltar) e **CLI** — as duas usando o mesmo motor.
@@ -27,18 +27,27 @@ Sem instalação, sem Electron, sem runtime extra: é WPF nativo do Windows.
   reconhecido — um arrasto, nenhum clique. Soltou antes de plugar o pendrive? O
   jogo espera na lista e instala quando a unidade aparecer.
 - O serial é **lido do `SYSTEM.CNF`** na hora e mostrado antes de gravar.
-- Escolha **UL.\* (1 GiB)** ou **DVD (ISO < 4 GB)** — com validação de tamanho.
-- **SIMULAR** gera o plano completo no log sem escrever nada.
+- **DISPOSITIVO** diz o que você selecionou e quanto cabe: `F: PENDRIVE · SanDisk
+  3.2Gen1 · FAT32 · 64 GB`, com **usado / total / livre** e a barra de ocupação
+  atualizados a cada segundo — os números andam junto com a cópia.
+- Sem escolha de modo: o app sempre grava em **`ul.*`**, que divide o ISO em pedaços
+  de 1 GiB e por isso aceita jogo de qualquer tamanho (o limite do FAT32 é 4 GB por
+  arquivo). Não existe mais jeito de errar essa escolha.
 - **INSTALAR** mostra progresso real (bytes, %), log com timestamp e aviso de duplicados.
 - **JOGOS NA UNIDADE** lista o que já está lá, com CRC e número de pedaços.
 - **BIBLIOTECA** — clique na unidade e a aba abre sozinha, com **todos os jogos**
   que existem nela: etiqueta de plataforma, pasta e tamanho. Cobre PS2, PS1, SNES,
   N64, GBA, GB/GBC, NDS, GC/Wii, Mega Drive, Master System, NES, PSP e Dreamcast.
-  O botão **+** de um ISO de PS2 manda o jogo direto para a lista de instalação.
+  O botão **+** de um jogo de PS2 manda o jogo direto para a lista de instalação.
   PS1 e Nintendo aparecem só para consulta — **o OPL executa apenas PS2**.
+- **Compactados na biblioteca.** `.zip`, `.rar` (inclusive multi-volume) e `.7z`
+  aparecem com o que têm dentro (`… · 1 jogo(s) dentro · God of War.iso`). O app lê
+  só o índice do arquivo — nada é extraído só para listar — e o **+** extrai e
+  instala o jogo de dentro.
 - Botão **ISO** remonta os pedaços de um jogo em `.iso` único (para PCSX2 ou backup).
 - Botão **✕** remove um jogo (pedaços + entrada do `ul.cfg`), com confirmação.
-- Unidades fixas aparecem marcadas com `HD` — o padrão é sempre o pendrive removível.
+- Os chips mostram o **tipo de cada unidade** (`F: PENDRIVE`, `E: SSD`, `H: HD`) —
+  o padrão é sempre o pendrive removível.
 - **Pendrive em tempo real:** conecte ou remova com o programa aberto — a unidade
   aparece/some sozinha em até 1 s, sem precisar clicar em RECARREGAR. Se o pendrive
   selecionado sair, o app avisa e escolhe outro automaticamente.
@@ -271,7 +280,7 @@ separado (`gui/Worker.ps1`) para não travar a janela.
 # 20 asserções do worker da GUI: instala, exporta, cancela
 .\tests\Test-GuiWorker.ps1
 
-# 147 asserções da interface: clica em todo controle, instala, remove e varre a unidade
+# 162 asserções da interface: clica em todo controle, instala, remove e varre a unidade
 .\tests\Test-GuiUi.ps1
 ```
 
@@ -291,21 +300,26 @@ diretório temporário: instala um ISO real, remonta o `.iso`, confere serial e 
 e valida o cancelamento. Se ele passa, a GUI não tem caminho de cópia divergente.
 
 O `Test-GuiUi.ps1` abre a janela de verdade (WPF) e **clica em cada controle**: chips de
-unidade, modos, INSTALAR, SIMULAR, LIMPAR LISTA, RECARREGAR, COPIAR, ✕ dos arquivos,
-✕ dos jogos (cancelar / ESC / confirmar), ISO (exportar), minimizar / maximizar / fechar —
-e ainda faz uma varredura que clica no que sobrou. Ele usa uma unidade virtual (`subst`)
-para nunca gravar em disco real, e falha se qualquer handler lançar exceção. Foi esse
-teste que encontrou o bug do clique que fechava o programa. Ele também simula um pendrive
+unidade, INSTALAR, LIMPAR LISTA, RECARREGAR, COPIAR, ✕ dos arquivos, ✕ dos jogos
+(cancelar / ESC / confirmar), ISO (exportar), minimizar / maximizar / fechar — e ainda
+faz uma varredura que clica no que sobrou. Ele usa uma unidade virtual (`subst`) para
+nunca gravar em disco real, e falha se qualquer handler lançar exceção. Foi esse teste
+que encontrou o bug do clique que fechava o programa. Ele também simula um pendrive
 entrando e saindo (`subst`) e confere que a unidade aparece/some sozinha.
+
+O painel do dispositivo é testado de verdade: escreve 16 MB na unidade virtual **sem
+clicar em nada** e espera o texto de usado/livre mudar sozinho — é assim que o teste
+prova que o número é em tempo real e não uma foto do momento em que a tela abriu.
 
 A seção da biblioteca monta uma árvore de ROMs (PS1, SNES, N64, GBA, NDS, GC) e um ISO de
 PS2 **sintético** (ISO9660 + `SYSTEM.CNF`, gerado na hora), para conferir a classificação
 de cada plataforma, a leitura do serial de dentro da imagem, o `.cue`/`.bin` sem
 duplicata e o botão **+** colocando o jogo certo na fila de instalação.
 
-A última seção cria um **ZIP** e um **RAR** com ISOs sintéticos e solta os dois na
-janela: confere que a extração roda em segundo plano, que o jogo instala sozinho, que
-o nome vem do arquivo e que o temporário é apagado depois.
+A última seção cria um **ZIP**, um **RAR** e um **7Z** com ISOs sintéticos: solta o ZIP e
+o RAR na janela (extração em segundo plano, instalação automática, nome correto e
+temporário apagado) e abre os três na **biblioteca**, conferindo que o jogo de dentro é
+listado, que o serial vem do nome do ISO interno e que o **+** do ZIP extrai e instala.
 
 ```powershell
 # discos com erro de I/O conhecido podem ser pulados
@@ -358,7 +372,7 @@ easyromstooplps2/
 ├── tests/
 │   ├── Test-UlFormat.ps1      # 17 asserções do formato
 │   ├── Test-GuiWorker.ps1     # 20 asserções do worker da GUI
-│   └── Test-GuiUi.ps1         # 147 asserções clicando em todo controle
+│   └── Test-GuiUi.ps1         # 162 asserções clicando em todo controle
 ├── docs/
 │   ├── TUTORIAL.md            # passo a passo do zero (pendrive + FMCB + OPL)
 │   ├── UL-FORMAT.md           # especificação do formato ul.* / ul.cfg

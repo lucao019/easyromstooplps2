@@ -108,15 +108,23 @@ formatação/porta — não é o jogo.
 Se você não quer terminal:
 
 1. Duplo clique em **`EasyRomsToOPL.cmd`**.
-2. Confira o chip do pendrive em **PENDRIVE** (o removível é escolhido sozinho).
+2. Confira o painel **DISPOSITIVO**: ele diz o que você selecionou e quanto cabe —
+   `F: PENDRIVE · SanDisk 3.2Gen1 · FAT32 · 64 GB`, com **usado / total / livre** e a
+   barra de ocupação. Esses números são relidos a cada segundo, inclusive durante a
+   cópia. Os chips (`F: PENDRIVE`, `E: SSD`, `H: HD`) mostram o tipo de cada unidade;
+   o removível é escolhido sozinho.
 3. **Arraste o jogo para a janela** — `.iso`, `.zip`, `.rar`, `.7z` ou uma pasta.
 4. Com **INSTALAR AO SOLTAR** ligado (padrão), ele extrai o compactado e já começa a
    gravar: um arrasto, nenhum clique. Soltou antes de plugar o pendrive? O jogo espera
    na lista e instala quando a unidade aparecer.
 5. Veja o serial que apareceu — se estiver vazio ou vermelho, o ISO não serve.
-6. Escolha o modo (**UL.\* (1 GiB)** quase sempre) e o nome no menu.
-7. Quer revisar antes? Desligue **INSTALAR AO SOLTAR**, use **SIMULAR** para ver o
-   plano e depois **INSTALAR NO PENDRIVE**.
+6. Se quiser, ajuste o **NOME NO MENU DO OPL** (até 32 caracteres).
+7. Quer revisar antes? Desligue **INSTALAR AO SOLTAR** e depois clique em
+   **INSTALAR NO PENDRIVE**.
+
+> Não existe escolha de modo: o app grava sempre em **`ul.*`**, que divide o ISO em
+> pedaços de 1 GiB e aceita jogo de qualquer tamanho. O `DVD\` continua disponível
+> apenas na linha de comando (`-DvdFolder`), para quem quiser um arquivo só.
 
 > ZIP é extraído pelo próprio Windows. Para `.rar` o app usa o **UnRAR** (instalado com o
 > WinRAR); para `.7z`, o **7-Zip** ou o `tar` do Windows. Sem nenhum deles, o app avisa e
@@ -129,10 +137,17 @@ atualizada — se o jogo está ali, o PS2 vai enxergar. O resto deste passo é o
 **Não sabe o que já tem no pendrive?** Clique na unidade e abra a aba **BIBLIOTECA**: o
 app varre a unidade e lista todos os jogos encontrados, separados por plataforma (PS2,
 PS1, SNES, N64, GBA, NDS, GC/Wii, Mega Drive, Master System, NES, PSP, Dreamcast), com
-pasta e tamanho. Jogos já instalados aparecem marcados `OPL`; em um ISO de PS2, o botão
+pasta e tamanho. Jogos já instalados aparecem marcados `OPL`; em um jogo de PS2, o botão
 **+** coloca o jogo na lista de instalação. PS1 e Nintendo são **só consulta** — o OPL
 executa apenas jogos de PS2. A varredura roda em segundo plano e se refaz sozinha quando
 o pendrive entra ou sai.
+
+A biblioteca também entende **compactados**: `.zip`, `.rar` (inclusive os divididos em
+`.part1.rar`, `.part2.rar`…) e `.7z` aparecem como uma linha com o que têm dentro —
+`Jogo.zip · 1 jogo(s) dentro · Shadow of the Colossus.iso`. Só o índice do arquivo é
+lido para montar a lista; nada é extraído até você clicar no **+** (aí o app extrai e
+instala). Se o compactado estiver protegido por senha ou corrompido, ele aparece como
+**ARQUIVO** e o **+** avisa o motivo.
 
 ### 5.1 Clone a ferramenta
 
@@ -201,9 +216,11 @@ Se o jogo tem menos de 4 GB, você pode deixá-lo inteiro na pasta `DVD\`:
 O OPL lê ISOs de `DVD\` diretamente. Vantagem: um arquivo só, fácil de copiar de volta.
 Desvantagem: não serve para jogos acima de 4 GB (o FAT32 recusa).
 
-> **Quando usar cada modo?**
-> `ul.*` para tudo acima de 4 GB e para o padrão "de fábrica" do OPL.
-> `DVD\` para jogos pequenos, quando você quer simplicidade.
+> **Quando usar cada formato?**
+> `ul.*` é o padrão do OPL e o que a interface grava sempre: aceita jogo de qualquer
+> tamanho e é o formato "de fábrica" do console.
+> `DVD\` só existe na linha de comando (`-DvdFolder`), para jogos pequenos quando você
+> quer um arquivo único e fácil de copiar de volta.
 
 ## 6. Verificar antes de desconectar
 
