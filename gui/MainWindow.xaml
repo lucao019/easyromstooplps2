@@ -321,30 +321,35 @@
     <!-- ============================ CONTEÚDO ============================ -->
     <Grid Grid.Row="1" Margin="14">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="1.15*"/>
-        <ColumnDefinition Width="14"/>
         <ColumnDefinition Width="1*"/>
+        <ColumnDefinition Width="14"/>
+        <ColumnDefinition Width="1.15*"/>
       </Grid.ColumnDefinitions>
 
       <!-- coluna esquerda -->
       <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0,0,4,0">
         <StackPanel>
 
-          <TextBlock Style="{StaticResource Section}" Text="01 // IMAGENS DE JOGO"/>
-          <Border x:Name="DropZone" Style="{StaticResource Panel}" Height="118" Cursor="Hand">
+          <Grid Margin="0,0,0,6">
+            <TextBlock Style="{StaticResource Section}" Text="01 // JOGO" Margin="0"/>
+            <ToggleButton x:Name="BtnAuto" Style="{StaticResource Chip}" Content="INSTALAR AO SOLTAR"
+                          IsChecked="True" HorizontalAlignment="Right" Margin="0" Padding="8,3" FontSize="9"
+                          ToolTip="Solte o jogo e ele já começa a instalar no pendrive selecionado"/>
+          </Grid>
+          <Border x:Name="DropZone" Style="{StaticResource Panel}" Height="126" Cursor="Hand">
             <Grid>
               <Rectangle Stroke="#3A3A3A" StrokeThickness="1" StrokeDashArray="4 3" Margin="6"/>
               <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                <TextBlock x:Name="DropTitle" Text="ARRASTE OS .ISO AQUI"
+                <TextBlock x:Name="DropTitle" Text="ARRASTE O JOGO AQUI"
                            Foreground="{StaticResource Cyan}" FontWeight="Bold" FontSize="13"
                            HorizontalAlignment="Center"/>
-                <TextBlock Text="ou clique para escolher no disco"
+                <TextBlock Text="ISO · ZIP · RAR · 7Z — ou clique para escolher"
                            Style="{StaticResource Dim}" HorizontalAlignment="Center" Margin="0,6,0,0"/>
               </StackPanel>
             </Grid>
           </Border>
 
-          <Grid Margin="0,8,0,16">
+          <Grid Margin="0,8,0,12">
             <TextBlock x:Name="FileCount" Text="NENHUM ARQUIVO" Style="{StaticResource Dim}"/>
             <TextBlock x:Name="BtnClearFiles" Text="LIMPAR LISTA" Foreground="{StaticResource Muted}"
                        FontSize="10" HorizontalAlignment="Right" Cursor="Hand"
@@ -357,9 +362,8 @@
           <StackPanel x:Name="ModePanel" Orientation="Horizontal" Margin="0,0,0,10"/>
 
           <TextBlock Style="{StaticResource Section}" Text="03 // NOME NO MENU DO OPL"/>
-          <TextBox x:Name="NameBox" Style="{StaticResource Tb}" MaxLength="32"/>
-          <TextBlock Style="{StaticResource Dim}" Margin="0,6,0,18"
-                     Text="MÁXIMO 32 CARACTERES · ACENTOS SÃO REMOVIDOS · NÃO RENOMEIE DEPOIS"/>
+          <TextBox x:Name="NameBox" Style="{StaticResource Tb}" MaxLength="32"
+                   ToolTip="Máximo 32 caracteres · acentos são removidos · não renomeie depois"/>
 
           <Grid>
             <Grid.ColumnDefinitions>
@@ -372,59 +376,7 @@
           </Grid>
 
           <TextBlock x:Name="HintText" Style="{StaticResource Dim}" Margin="0,10,0,0"
-                     TextWrapping="Wrap" Text="A instalação grava pedaços de 1 GiB e atualiza o ul.cfg. Nada é apagado sem confirmação."/>
-
-          <Border Style="{StaticResource Panel}" Margin="0,20,0,0">
-            <StackPanel>
-              <Border Style="{StaticResource PanelHeader}">
-                <TextBlock Text="FLUXO" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
-              </Border>
-              <StackPanel Margin="12">
-                <Grid Margin="0,0,0,10">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="24"/>
-                    <ColumnDefinition Width="*"/>
-                  </Grid.ColumnDefinitions>
-                  <TextBlock Grid.Column="0" Text="01" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="1" Text="Arraste o .iso (ou vários) para a área acima."
-                             TextWrapping="Wrap" FontSize="10" Foreground="#999999"/>
-                </Grid>
-                <Grid Margin="0,0,0,10">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="24"/>
-                    <ColumnDefinition Width="*"/>
-                  </Grid.ColumnDefinitions>
-                  <TextBlock Grid.Column="0" Text="02" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="1" Text="Confira o serial lido do SYSTEM.CNF e o modo de instalação."
-                             TextWrapping="Wrap" FontSize="10" Foreground="#999999"/>
-                </Grid>
-                <Grid Margin="0,0,0,10">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="24"/>
-                    <ColumnDefinition Width="*"/>
-                  </Grid.ColumnDefinitions>
-                  <TextBlock Grid.Column="0" Text="03" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="1" Text="SIMULAR mostra o plano. INSTALAR grava e valida o tamanho."
-                             TextWrapping="Wrap" FontSize="10" Foreground="#999999"/>
-                </Grid>
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="24"/>
-                    <ColumnDefinition Width="*"/>
-                  </Grid.ColumnDefinitions>
-                  <TextBlock Grid.Column="0" Text="04" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="1" Text="Ejete com segurança e teste no PS2 antes de fechar tudo."
-                             TextWrapping="Wrap" FontSize="10" Foreground="#999999"/>
-                </Grid>
-                <Border BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,12,0,10"/>
-                <TextBlock Text="USE APENAS CÓPIAS DE JOGOS QUE VOCÊ POSSUI."
-                           Foreground="{StaticResource Yellow}" FontSize="9" FontWeight="Bold"
-                           TextWrapping="Wrap"/>
-                <TextBlock Text="Esta ferramenta não baixa nem distribui jogos."
-                           Foreground="#555555" FontSize="9" Margin="0,4,0,0" TextWrapping="Wrap"/>
-              </StackPanel>
-            </StackPanel>
-          </Border>
+                     TextWrapping="Wrap" Text="Solte um jogo: o app grava no pendrive e atualiza o ul.cfg sozinho."/>
 
         </StackPanel>
       </ScrollViewer>
@@ -436,7 +388,7 @@
           <RowDefinition Height="12"/>
           <RowDefinition Height="*"/>
           <RowDefinition Height="12"/>
-          <RowDefinition Height="230"/>
+          <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- pendrive -->
@@ -548,25 +500,31 @@
           </Grid>
         </Border>
 
-        <!-- log -->
+        <!-- log (fechado por padrão: abre no cabeçalho) -->
         <Border Grid.Row="4" Style="{StaticResource Panel}">
           <Grid>
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/>
-              <RowDefinition Height="*"/>
+              <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            <Border Grid.Row="0" Style="{StaticResource PanelHeader}">
+            <Border x:Name="LogHeader" Grid.Row="0" Style="{StaticResource PanelHeader}" Cursor="Hand">
               <Grid>
                 <TextBlock Text="LOG" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
-                <TextBlock x:Name="BtnCopyLog" Text="COPIAR" Foreground="{StaticResource Muted}"
-                           FontSize="10" HorizontalAlignment="Right" Cursor="Hand" TextDecorations="Underline"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                  <TextBlock x:Name="BtnCopyLog" Text="COPIAR" Foreground="{StaticResource Muted}"
+                             FontSize="10" Cursor="Hand" TextDecorations="Underline" Margin="0,0,12,0"/>
+                  <TextBlock x:Name="BtnLogToggle" Text="ABRIR ▾" Foreground="{StaticResource Muted}"
+                             FontSize="10" Cursor="Hand" TextDecorations="Underline"/>
+                </StackPanel>
               </Grid>
             </Border>
-            <RichTextBox x:Name="LogBox" Grid.Row="1" IsReadOnly="True" BorderThickness="0"
-                         Background="{StaticResource Bg}" Foreground="{StaticResource Fg}"
-                         FontFamily="JetBrains Mono,Cascadia Mono,Consolas" FontSize="11"
-                         VerticalScrollBarVisibility="Auto" Padding="8,6"
-                         IsUndoEnabled="False" AcceptsReturn="True"/>
+            <Border x:Name="LogBody" Grid.Row="1" Visibility="Collapsed" MaxHeight="230">
+              <RichTextBox x:Name="LogBox" IsReadOnly="True" BorderThickness="0"
+                           Background="{StaticResource Bg}" Foreground="{StaticResource Fg}"
+                           FontFamily="JetBrains Mono,Cascadia Mono,Consolas" FontSize="11"
+                           VerticalScrollBarVisibility="Auto" Padding="8,6"
+                           IsUndoEnabled="False" AcceptsReturn="True"/>
+            </Border>
           </Grid>
         </Border>
       </Grid>
@@ -581,6 +539,8 @@
                    VerticalAlignment="Center" Margin="0,0,8,0"/>
           <TextBlock x:Name="StatusText" Text="PRONTO" FontSize="10" Foreground="{StaticResource Muted}"/>
         </StackPanel>
+        <TextBlock Text="USE APENAS CÓPIAS QUE VOCÊ POSSUI" FontSize="9" Foreground="{StaticResource Yellow}"
+                   Opacity="0.65" HorizontalAlignment="Center" VerticalAlignment="Center"/>
         <TextBlock x:Name="VersionText" Text="EASYROMSTOOPL 1.2.0 · MIT" FontSize="10" Foreground="#3A3A3A"
                    HorizontalAlignment="Right" VerticalAlignment="Center"/>
       </Grid>

@@ -6,7 +6,7 @@
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![PS2](https://img.shields.io/badge/PlayStation%202-OPL%20USB-003791?logo=playstation&logoColor=white)
 ![GUI](https://img.shields.io/badge/interface-WPF%20nativa-8BE9FD)
-![Testes](https://img.shields.io/badge/testes-162%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-184%20passando-brightgreen)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 
 **Interface gráfica** (arrastar e soltar) e **CLI** — as duas usando o mesmo motor.
@@ -20,7 +20,12 @@
 Abra com **duplo clique em `EasyRomsToOPL.cmd`** (ou rode `gui\EasyRomsToOPL.GUI.ps1`).
 Sem instalação, sem Electron, sem runtime extra: é WPF nativo do Windows.
 
-- **Arraste os `.iso`** para a área pontilhada (ou clique para escolher vários).
+- **Arraste o jogo e pronto.** A área pontilhada aceita **`.iso`, `.zip`, `.rar`
+  (até multi-volume) e `.7z`**, além de pastas. O compactado é extraído em segundo
+  plano e o ISO entra na fila sozinho.
+- Com **INSTALAR AO SOLTAR** ligado (padrão), a cópia começa assim que o ISO é
+  reconhecido — um arrasto, nenhum clique. Soltou antes de plugar o pendrive? O
+  jogo espera na lista e instala quando a unidade aparecer.
 - O serial é **lido do `SYSTEM.CNF`** na hora e mostrado antes de gravar.
 - Escolha **UL.\* (1 GiB)** ou **DVD (ISO < 4 GB)** — com validação de tamanho.
 - **SIMULAR** gera o plano completo no log sem escrever nada.
@@ -102,7 +107,9 @@ No PS2: ligue o console → FMCB → **OPL → USB** → o jogo está na lista.
 
 - **Windows 10/11** com PowerShell 5.1 (já vem no sistema) ou PowerShell 7+.
 - Pendrive formatado em **FAT32** (MBR). É o que o OPL entende.
-- Um **ISO de PS2 íntegro** (`.iso`).
+- Um **ISO de PS2 íntegro** (`.iso`) — ou o `.zip`/`.rar`/`.7z` que você baixou.
+  ZIP é extraído pelo próprio Windows; RAR usa o **UnRAR** (vem com o WinRAR) e
+  7Z usa o **7-Zip** ou o `tar` do Windows.
 - PS2 com **FreeMcBoot** no memory card e o **OPL** instalado — o pendrive não dá boot
   sozinho, quem carrega o OPL é o memory card.
 
@@ -264,7 +271,7 @@ separado (`gui/Worker.ps1`) para não travar a janela.
 # 20 asserções do worker da GUI: instala, exporta, cancela
 .\tests\Test-GuiWorker.ps1
 
-# 125 asserções da interface: clica em todo controle, instala, remove e varre a unidade
+# 147 asserções da interface: clica em todo controle, instala, remove e varre a unidade
 .\tests\Test-GuiUi.ps1
 ```
 
@@ -296,10 +303,35 @@ PS2 **sintético** (ISO9660 + `SYSTEM.CNF`, gerado na hora), para conferir a cla
 de cada plataforma, a leitura do serial de dentro da imagem, o `.cue`/`.bin` sem
 duplicata e o botão **+** colocando o jogo certo na fila de instalação.
 
+A última seção cria um **ZIP** e um **RAR** com ISOs sintéticos e solta os dois na
+janela: confere que a extração roda em segundo plano, que o jogo instala sozinho, que
+o nome vem do arquivo e que o temporário é apagado depois.
+
 ```powershell
 # discos com erro de I/O conhecido podem ser pulados
 .\tests\Test-GuiUi.ps1 -SkipDrives "D"
 ```
+
+## Verificar o pendrive (sem o PS2)
+
+O `tools/Test-OplPendrive.ps1` reproduz no Windows o que o OPL faz ao abrir a
+unidade USB — sem emular o console:
+
+```powershell
+.\tools\Test-OplPendrive.ps1 -Drive F
+```
+
+Ele lê o `ul.cfg` registro por registro (64 bytes), recalcula o CRC do nome, monta
+o nome de cada pedaço, confere tamanho/numeração/sobras e abre cada `.iso` de
+`DVD\` (ISO9660, PVD, `SYSTEM.CNF`, `BOOT2` e o executável apontado por ele). Sai
+com código 1 se encontrar algo que o OPL não abriria.
+
+No pendrive de teste (64 GB, 6 jogos) passou com 17 verificações OK. Num pendrive
+falso quebrado, reprovou pedaço faltando, tamanho errado, pedaço sobrando e ISO
+inválido.
+
+O que ele **não** cobre: a porta USB do console, a versão do OPL instalada nele e a
+compatibilidade específica do jogo.
 
 ## Estrutura
 
@@ -321,11 +353,12 @@ easyromstooplps2/
 │   └── EasyRomsToOPL.ico      # ícone do atalho
 ├── tools/
 │   ├── New-Icon.ps1           # gera o .ico (16…256)
-│   └── Build-Installer.ps1    # gera dist/Instalar-EasyRomsToOPL.cmd
+│   ├── Build-Installer.ps1    # gera dist/Instalar-EasyRomsToOPL.cmd
+│   └── Test-OplPendrive.ps1   # valida a unidade no formato que o OPL espera
 ├── tests/
 │   ├── Test-UlFormat.ps1      # 17 asserções do formato
 │   ├── Test-GuiWorker.ps1     # 20 asserções do worker da GUI
-│   └── Test-GuiUi.ps1         # 125 asserções clicando em todo controle
+│   └── Test-GuiUi.ps1         # 147 asserções clicando em todo controle
 ├── docs/
 │   ├── TUTORIAL.md            # passo a passo do zero (pendrive + FMCB + OPL)
 │   ├── UL-FORMAT.md           # especificação do formato ul.* / ul.cfg

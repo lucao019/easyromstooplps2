@@ -56,6 +56,7 @@ $ui = @{}
     'Root', 'DropZone', 'DropTitle', 'FileCount', 'BtnClearFiles', 'FilesPanel', 'ModePanel',
     'NameBox', 'BtnSimulate', 'BtnInstall', 'HintText', 'DrivesPanel', 'DriveCount', 'StatSpace',
     'StatGames', 'Bar', 'BarText', 'BarPct', 'BtnRefresh', 'GamesPanel', 'BtnCopyLog', 'LogBox',
+    'LogHeader', 'LogBody', 'BtnLogToggle', 'BtnAuto',
     'StatusText', 'BusyDot', 'Toasts', 'Overlay', 'ConfirmTitle', 'ConfirmText', 'BtnCancelConfirm',
     'BtnYesConfirm', 'BtnMin', 'BtnMax', 'BtnClose', 'VersionText',
     'TabOpl', 'TabLibrary', 'LibraryInfo', 'OplView', 'LibraryView', 'LibraryPanel'
@@ -86,6 +87,10 @@ $S = @{
     LibScan    = $null          # runspace da varredura em andamento
     LibTimer   = $null
     LibView    = 'opl'          # aba visivel: opl | library
+    AutoInstall = $true         # soltar o jogo já inicia a instalação
+    Extract    = $null          # extração de .zip/.rar/.7z em andamento
+    ExtractQueue = New-Object System.Collections.ArrayList
+    TempRoots  = New-Object System.Collections.ArrayList
 }
 
 $BRUSH = @{}
@@ -373,6 +378,9 @@ function Sync-Drives {
         $label = if ($first -and $first.Label) { ' — ' + $first.Label } else { '' }
         Show-Toast 'Pendrive conectado' ("{0}:{1}" -f $added[0], $label) 'ok'
         if ($S.Drive) { Set-Status ("PRONTO · {0}:" -f $S.Drive) '#50FA7B' }
+
+        # Soltou o jogo antes de plugar? Instala agora que a unidade apareceu.
+        if ($S.Files.Count -gt 0) { Invoke-AutoInstall }
     }
 }
 function Update-Space {
@@ -476,7 +484,7 @@ function Render-Files {
     if ($S.Files.Count -eq 0) {
         $ui.FileCount.Text = 'NENHUM ARQUIVO'
         $ui.NameBox.IsEnabled = $true
-        $ui.HintText.Text = 'A instalação grava pedaços de 1 GiB e atualiza o ul.cfg. Nada é apagado sem confirmação.'
+        $ui.HintText.Text = 'Solte um jogo: o app grava no pendrive e atualiza o ul.cfg sozinho.'
         return
     }
 
@@ -484,9 +492,9 @@ function Render-Files {
     $ui.NameBox.IsEnabled = ($S.Files.Count -eq 1)
 
     if ($S.Files.Count -eq 1) {
-        $ui.HintText.Text = 'O nome acima vai para o menu do OPL. Com vários arquivos, cada um usa o próprio nome.'
+        $ui.HintText.Text = 'O nome acima vai para o menu do OPL.'
     } else {
-        $ui.HintText.Text = 'Vários arquivos: cada ISO usa o próprio nome de arquivo como nome no menu.'
+        $ui.HintText.Text = 'Vários jogos: cada um usa o próprio nome de arquivo no menu.'
     }
 
     foreach ($f in $S.Files) {
@@ -558,26 +566,300 @@ function Render-Files {
     }
 }
 
+# ---------------------------------------------------------------- arquivos compactados
+
+$script:ExtractScript = @'
+param($Sync)
+
+$ErrorActionPreference = 'Stop'
+try {
+    New-Item -ItemType Directory -Force -Path $Sync.Dest | Out-Null
+
+    switch ($Sync.Kind) {
+        'zip' {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [IO.Compression.ZipFile]::ExtractToDirectory($Sync.Archive, $Sync.Dest)
+        }
+        'unrar' {
+            $argv = @('x', '-y', '-o+', $Sync.Archive, ($Sync.Dest + '\'))
+            & $Sync.Exe @argv | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw ('UnRAR saiu com código {0}' -f $LASTEXITCODE) }
+        }
+        '7z' {
+            $argv = @('x', '-y', ('-o' + $Sync.Dest), $Sync.Archive)
+            & $Sync.Exe @argv | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw ('7-Zip saiu com código {0}' -f $LASTEXITCODE) }
+        }
+        'tar' {
+            $argv = @('-xf', $Sync.Archive, '-C', $Sync.Dest)
+            & $Sync.Exe @argv | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw ('tar saiu com código {0}' -f $LASTEXITCODE) }
+        }
+        default { throw ('Extrator desconhecido: ' + $Sync.Kind) }
+    }
+
+    $Sync.Isos = @(Get-ChildItem -LiteralPath $Sync.Dest -Recurse -File -Filter '*.iso' -ErrorAction SilentlyContinue |
+        Sort-Object Length -Descending | ForEach-Object { $_.FullName })
+    $Sync.Ok = $true
+} catch {
+    $Sync.Error = $_.Exception.Message
+} finally {
+    $Sync.Done = $true
+}
+'@
+
+function Get-FirstPath {
+    param([string[]]$Candidates)
+    foreach ($c in $Candidates) {
+        if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+    }
+    return $null
+}
+
+function Get-Extractor {
+    <#
+        Escolhe quem extrai o arquivo. ZIP é nativo (.NET); RAR usa o UnRAR
+        do WinRAR; 7Z usa o 7-Zip; e o tar do Windows (libarchive) é a reserva.
+    #>
+    param([string]$Path)
+
+    $ext = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($ext -eq '.zip') { return [pscustomobject]@{ Kind = 'zip'; Exe = $null } }
+
+    $programFilesX86 = ${env:ProgramFiles(x86)}
+
+    if ($ext -eq '.rar') {
+        $unrar = Get-FirstPath @(
+            (Join-Path $env:ProgramFiles 'WinRAR\UnRAR.exe'),
+            $(if ($programFilesX86) { Join-Path $programFilesX86 'WinRAR\UnRAR.exe' })
+        )
+        if ($unrar) { return [pscustomobject]@{ Kind = 'unrar'; Exe = $unrar } }
+    }
+
+    $seven = Get-FirstPath @(
+        (Join-Path $env:ProgramFiles '7-Zip\7z.exe'),
+        $(if ($programFilesX86) { Join-Path $programFilesX86 '7-Zip\7z.exe' })
+    )
+    if ($seven) { return [pscustomobject]@{ Kind = '7z'; Exe = $seven } }
+
+    $tar = Get-Command tar.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($tar) { return [pscustomobject]@{ Kind = 'tar'; Exe = $tar.Source } }
+
+    return $null
+}
+
+function Remove-TempRoot {
+    param([string]$Path)
+    if (-not $Path) { return }
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    } catch { }
+    [void]$S.TempRoots.Remove($Path)
+}
+
+function Start-Extract {
+    param([string]$Archive)
+
+    $tool = Get-Extractor $Archive
+    if (-not $tool) {
+        Show-Toast 'Sem extrator' 'Instale o 7-Zip ou o WinRAR, ou extraia o .iso você mesmo.' 'error'
+        Add-Log ("Não sei extrair {0}: instale 7-Zip/WinRAR ou extraia o ISO." -f (Split-Path $Archive -Leaf)) 'error'
+        return
+    }
+
+    [void]$S.ExtractQueue.Add([pscustomobject]@{ Archive = $Archive; Tool = $tool })
+    if (-not $S.Extract) { Start-NextExtract }
+}
+
+function Start-NextExtract {
+    if ($S.Extract -or $S.ExtractQueue.Count -eq 0) { return }
+
+    $job = $S.ExtractQueue[0]
+    $S.ExtractQueue.RemoveAt(0)
+
+    $tempBase = Join-Path ([IO.Path]::GetTempPath()) 'EasyRomsToOPL'
+    $dest = Join-Path $tempBase ([guid]::NewGuid().ToString('N'))
+
+    $sync = [hashtable]::Synchronized(@{
+        Archive = $job.Archive
+        Dest    = $dest
+        Kind    = $job.Tool.Kind
+        Exe     = $job.Tool.Exe
+        Isos    = @()
+        Ok      = $false
+        Error   = ''
+        Done    = $false
+    })
+
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.ApartmentState = 'STA'
+    $rs.Open()
+
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript($script:ExtractScript)
+    [void]$ps.AddParameter('Sync', $sync)
+
+    $S.Extract = [pscustomobject]@{
+        Sync       = $sync
+        PowerShell = $ps
+        Handle     = $ps.BeginInvoke()
+        Timer      = $null
+        Dest       = $dest
+        Archive    = $job.Archive
+    }
+    [void]$S.TempRoots.Add($dest)
+
+    $ui.Bar.Value = 0
+    $ui.BarPct.Text = ''
+    $ui.BarText.Text = 'EXTRAINDO...'
+    Set-Status 'EXTRAINDO...' '#F1FA8C'
+    Add-Log ("Extraindo {0}..." -f (Split-Path $job.Archive -Leaf)) 'info'
+
+    $timer = New-Object Windows.Threading.DispatcherTimer
+    $timer.Interval = [TimeSpan]::FromMilliseconds(300)
+    $timer.Add_Tick({ Update-Extract })
+    $S.Extract.Timer = $timer
+    $timer.Start()
+}
+
+function Update-Extract {
+    $x = $S.Extract
+    if (-not $x) { return }
+    if (-not $x.Sync.Done) { return }
+
+    $x.Timer.Stop()
+    try { $x.PowerShell.Dispose() } catch { }
+    $S.Extract = $null
+
+    if ($x.Sync.Ok) {
+        $isos = @($x.Sync.Isos)
+        if ($isos.Count -eq 0) {
+            Add-Log 'O arquivo não tem nenhum .iso dentro.' 'error'
+            Show-Toast 'Nenhum ISO' ('{0} não tem .iso dentro.' -f (Split-Path $x.Archive -Leaf)) 'error'
+            Remove-TempRoot $x.Dest
+        } else {
+            Add-Log ('{0} ISO(s) encontrado(s) dentro do arquivo.' -f $isos.Count) 'ok'
+            foreach ($iso in $isos) { Add-IsoFile $iso }
+        }
+    } else {
+        Add-Log ("Falha ao extrair: {0}" -f $x.Sync.Error) 'error'
+        Show-Toast 'Falha ao extrair' $x.Sync.Error 'error'
+        Remove-TempRoot $x.Dest
+    }
+
+    $ui.BarText.Text = 'OCIOSO'
+    if ($S.Drive) { Set-Status ("PRONTO · {0}:" -f $S.Drive) '#50FA7B' }
+
+    if ($S.ExtractQueue.Count -gt 0) { Start-NextExtract; return }
+    Invoke-AutoInstall
+}
+
+function Remove-InstalledTempFiles {
+    <#
+        Depois de instalar, apaga o que veio de .zip/.rar/.7z: o jogo já está
+        no pendrive e o temporário só ocuparia espaço.
+    #>
+    if ($S.TempRoots.Count -eq 0) { return }
+
+    $gone = @()
+    foreach ($f in @($S.Files)) {
+        foreach ($root in @($S.TempRoots)) {
+            if ($f.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $gone += $f; break }
+        }
+    }
+    if ($gone.Count -eq 0) { return }
+
+    foreach ($f in $gone) { [void]$S.Files.Remove($f) }
+    foreach ($root in @($S.TempRoots)) { Remove-TempRoot $root }
+    $ui.NameBox.Text = ''
+    Render-Files
+}
+
+# ---------------------------------------------------------------- arquivos
+
+function Add-OneDropped {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        Show-Toast 'Arquivo não encontrado' $Path 'error'
+        return 0
+    }
+
+    $ext = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($ext -eq '.iso') {
+        $before = $S.Files.Count
+        Add-IsoFile $Path
+        return ($S.Files.Count - $before)
+    }
+
+    if ($ext -in '.zip', '.rar', '.7z') {
+        Start-Extract $Path
+        return 0
+    }
+
+    Show-Toast 'Arquivo ignorado' (Split-Path $Path -Leaf) 'warn'
+    return 0
+}
+
 function Add-DroppedFiles {
     <#
         Chamado pelo evento de drop (e pelo teste). Aceita qualquer coisa que
-        venha do DataObject: caminhos, um caminho só, ou nada.
+        venha do DataObject: ISO, ZIP/RAR/7Z, pastas, caminhos ou nada.
+        Com -Auto, começa a instalar assim que o(s) arquivo(s) estiverem prontos.
     #>
-    param($Files)
+    param($Files, [switch]$Auto)
 
     foreach ($f in @($Files)) {
         if (-not $f) { continue }
-        Add-IsoFile ([string]$f)
+        $path = [string]$f
+
+        if (Test-Path -LiteralPath $path -PathType Container) {
+            $found = @(Get-ChildItem -LiteralPath $path -Recurse -Depth 2 -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Extension -in '.iso', '.zip', '.rar', '.7z' })
+            if ($found.Count -eq 0) {
+                Show-Toast 'Pasta sem jogos' ('Nenhum .iso/.zip/.rar/.7z em ' + (Split-Path $path -Leaf)) 'warn'
+                continue
+            }
+            foreach ($g in $found) { [void](Add-OneDropped $g.FullName) }
+            continue
+        }
+
+        [void](Add-OneDropped $path)
     }
+
+    if ($Auto) { Invoke-AutoInstall }
+}
+
+function Invoke-AutoInstall {
+    <#
+        O "arrastou, instalou": só dispara com tudo pronto (nada extraindo,
+        todos os ISOs válidos e um pendrive selecionado). Sem pendrive, o
+        arquivo fica na lista e a instalação começa quando ele aparecer.
+    #>
+    if (-not $S.AutoInstall) { return }
+    if ($S.Busy -or $S.Extract -or $S.ExtractQueue.Count -gt 0) { return }
+    if ($S.Files.Count -eq 0) { return }
+    if (@($S.Files | Where-Object { -not $_.Valid }).Count -gt 0) { return }
+
+    if (-not $S.Drive) {
+        Show-Toast 'Conecte o pendrive' 'O jogo fica na lista; instalo assim que a unidade aparecer.' 'warn'
+        Set-Status 'SEM PENDRIVE' '#FF5555'
+        return
+    }
+
+    Start-Install
 }
 
 function Show-AddFilesDialog {
     $dlg = New-Object System.Windows.Forms.OpenFileDialog
-    $dlg.Title = 'Escolha as imagens de PS2'
-    $dlg.Filter = 'Imagens de PS2 (*.iso)|*.iso|Todos os arquivos (*.*)|*.*'
+    $dlg.Title = 'Escolha o jogo (ISO, ZIP, RAR ou 7Z)'
+    $dlg.Filter = 'Jogos (*.iso;*.zip;*.rar;*.7z)|*.iso;*.zip;*.rar;*.7z|Todos os arquivos (*.*)|*.*'
     $dlg.Multiselect = $true
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        Add-DroppedFiles -Files $dlg.FileNames
+        Add-DroppedFiles -Files $dlg.FileNames -Auto
     }
 }
 
@@ -1136,6 +1418,7 @@ function Set-Busy {
     $ui.BtnRefresh.IsEnabled = -not $Busy
     $ui.BtnClearFiles.IsEnabled = -not $Busy
     $ui.DropZone.IsEnabled = -not $Busy
+    $ui.BtnAuto.IsEnabled = -not $Busy
     $ui.NameBox.IsEnabled = (-not $Busy) -and ($S.Files.Count -le 1)
     if ($Busy) {
         Set-Status 'TRABALHANDO...' '#F1FA8C'
@@ -1190,6 +1473,7 @@ function Update-Worker {
         Load-Games
         Update-DriveChips
         Refresh-Library
+        if (-not $sync.Cancel -and $sync.Failed -eq 0) { Remove-InstalledTempFiles }
 
         # Load-Games recalcula o uso do disco; restaura o resultado da operação.
         if ($sync.Cancel) {
@@ -1210,6 +1494,7 @@ function Start-Install {
     param([switch]$Simulate)
 
     if ($S.Busy) { return }
+    if ($S.Extract) { return }
     if (-not $S.Drive) { Show-Toast 'Sem pendrive' 'Selecione uma unidade acima.' 'error'; return }
     if ($S.Files.Count -eq 0) { Show-Toast 'Nada para instalar' 'Arraste um .iso para a área pontilhada.' 'error'; return }
 
@@ -1281,11 +1566,14 @@ function Start-Install {
 
     # duplicados?
     $dups = @()
-    if ($S.Mode -eq 'ul') {
-        $existing = @(Read-UlEntries $root)
-        foreach ($j in $jobs) {
+    $existing = @(Read-UlEntries $root)
+    foreach ($j in $jobs) {
+        if ($j.Mode -eq 'ul') {
             $hit = $existing | Where-Object { $_.Serial -eq $j.Serial } | Select-Object -First 1
             if ($hit) { $dups += ('{0} (já instalado como "{1}")' -f $j.Name, $hit.Nome) }
+        } else {
+            $dvdPath = Join-Path (Join-Path $root 'DVD') ($j.Name + '.iso')
+            if (Test-Path -LiteralPath $dvdPath) { $dups += ('{0} (já existe em DVD\{0}.iso)' -f $j.Name) }
         }
     }
 
@@ -1297,6 +1585,7 @@ function Start-Install {
         return
     }
 
+    Add-Log ('Instalando {0} jogo(s) em {1}:...' -f $jobs.Count, $root) 'info'
     Start-Worker -Jobs $jobs
 }
 
@@ -1409,6 +1698,29 @@ $ui.BtnClearFiles.Add_MouseLeftButtonUp({
     $ui.NameBox.Text = ''
 })
 
+$ui.BtnAuto.Add_Click({
+    $S.AutoInstall = [bool]$ui.BtnAuto.IsChecked
+    Add-Log ('Instalar ao soltar: {0}' -f $(if ($S.AutoInstall) { 'LIGADO' } else { 'DESLIGADO' })) 'dim'
+})
+
+function Toggle-Log {
+    $open = ($ui.LogBody.Visibility -ne 'Visible')
+    $ui.LogBody.Visibility = if ($open) { 'Visible' } else { 'Collapsed' }
+    $ui.BtnLogToggle.Text = if ($open) { 'FECHAR ▴' } else { 'ABRIR ▾' }
+}
+
+$ui.BtnLogToggle.Add_MouseLeftButtonUp({
+    param($sender, $e)
+    Toggle-Log
+    $e.Handled = $true
+})
+
+$ui.LogHeader.Add_MouseLeftButtonUp({
+    param($sender, $e)
+    Toggle-Log
+    $e.Handled = $true
+})
+
 $ui.BtnCancelConfirm.Add_Click({ Hide-Confirm })
 $ui.BtnYesConfirm.Add_Click({
     $action = $S.Confirm
@@ -1423,11 +1735,13 @@ $ui.BtnYesConfirm.Add_Click({
 })
 
 $ui.BtnCopyLog.Add_MouseLeftButtonUp({
+    param($sender, $e)
     try {
         $text = (New-Object Windows.Documents.TextRange($ui.LogBox.Document.ContentStart, $ui.LogBox.Document.ContentEnd)).Text
         [Windows.Clipboard]::SetText($text)
         Show-Toast 'Log copiado' 'Conteúdo na área de transferência.' 'info'
     } catch { }
+    $e.Handled = $true
 })
 
 $ui.DropZone.Add_MouseLeftButtonUp({ Show-AddFilesDialog })
@@ -1437,7 +1751,7 @@ $win.Add_DragOver({
     if ($e.Data.GetDataPresent([Windows.DataFormats]::FileDrop)) {
         $e.Effects = 'Copy'
         $ui.DropZone.BorderBrush = Br '#8BE9FD'
-        $ui.DropTitle.Text = 'SOLTE PARA ADICIONAR'
+        $ui.DropTitle.Text = $(if ($S.AutoInstall) { 'SOLTE PARA INSTALAR' } else { 'SOLTE PARA ADICIONAR' })
     } else {
         $e.Effects = 'None'
     }
@@ -1446,14 +1760,14 @@ $win.Add_DragOver({
 
 $win.Add_DragLeave({
     $ui.DropZone.BorderBrush = Br '#333333'
-    $ui.DropTitle.Text = 'ARRASTE OS .ISO AQUI'
+    $ui.DropTitle.Text = 'ARRASTE O JOGO AQUI'
 })
 
 $win.Add_Drop({
     param($sender, $e)
     $ui.DropZone.BorderBrush = Br '#333333'
-    $ui.DropTitle.Text = 'ARRASTE OS .ISO AQUI'
-    Add-DroppedFiles -Files $e.Data.GetData([Windows.DataFormats]::FileDrop)
+    $ui.DropTitle.Text = 'ARRASTE O JOGO AQUI'
+    Add-DroppedFiles -Files $e.Data.GetData([Windows.DataFormats]::FileDrop) -Auto
     $e.Handled = $true
 })
 
@@ -1498,6 +1812,16 @@ try {
     }
 } catch { }
 
+# Limpa temporários de execuções anteriores (extrações antigas).
+try {
+    $tempBase = Join-Path ([IO.Path]::GetTempPath()) 'EasyRomsToOPL'
+    if (Test-Path -LiteralPath $tempBase) {
+        Get-ChildItem -LiteralPath $tempBase -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+} catch { }
+
 Add-Log 'EASYROMS::OPL — motor ul.* carregado' 'ok'
 Add-Log ('CRC de referência: {0} (GTA) · {1} (Medalha)' -f ('{0:X8}' -f (Get-UsbaCrc32 'GTA - San Andreas')), ('{0:X8}' -f (Get-UsbaCrc32 'Medalha de Honra'))) 'dim'
 
@@ -1536,6 +1860,12 @@ if (-not $env:EASYROMS_SNAPSHOT) {
     $win.Add_Closed({
         if ($S.DriveTimer) { $S.DriveTimer.Stop(); $S.DriveTimer = $null }
         Stop-LibraryScan
+        if ($S.Extract) {
+            try { $S.Extract.Timer.Stop() } catch { }
+            try { $S.Extract.PowerShell.Dispose() } catch { }
+            $S.Extract = $null
+        }
+        foreach ($root in @($S.TempRoots)) { Remove-TempRoot $root }
     })
 }
 

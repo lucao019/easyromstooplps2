@@ -160,7 +160,7 @@ try {
 
     function Wait-Idle {
         $deadline = (Get-Date).AddMinutes(6)
-        while ($S.Busy -and (Get-Date) -lt $deadline) { Pump 100 }
+        while (($S.Busy -or $S.Extract -or $S.ExtractQueue.Count -gt 0) -and (Get-Date) -lt $deadline) { Pump 100 }
     }
 
     function Get-LogText {
@@ -179,6 +179,10 @@ try {
     Assert-True ($S.Drive -eq 'F' -or $S.Drive -eq $letter -or $S.Drive) "unidade selecionada ($($S.Drive):)"
     Assert-Equal 0 $S.Files.Count 'nenhum arquivo no início'
     Assert-Equal 'ul' $S.Mode 'modo padrão é ul'
+    Assert-True ([bool]$ui.BtnAuto.IsChecked) 'auto-instalar ligado por padrão'
+    Assert-True $S.AutoInstall 'estado do auto-instalar acompanha o botão'
+    Assert-Equal 'Collapsed' ([string]$ui.LogBody.Visibility) 'log começa fechado'
+    Assert-Equal 'ABRIR ▾' $ui.BtnLogToggle.Text 'log começa com ABRIR'
 
     # ============================================================ 2. chips de unidade
     Write-Host ''
@@ -221,6 +225,22 @@ try {
     Click ($modes | Where-Object { $_.Tag -eq 'ul' }) 'modo-ul'
     Assert-Equal 'ul' $S.Mode 'voltou para ul'
 
+    # auto-instalar e log: dois controles novos, um clique em cada.
+    # O clique do teste levanta o evento direto, sem passar pelo ToggleButton,
+    # então o IsChecked é alternado à mão antes do clique (como o WPF faria).
+    $ui.BtnAuto.IsChecked = $false
+    Click $ui.BtnAuto 'BtnAuto (desliga)'
+    Assert-True (-not $S.AutoInstall) 'auto-instalar desliga'
+    $ui.BtnAuto.IsChecked = $true
+    Click $ui.BtnAuto 'BtnAuto (liga)'
+    Assert-True $S.AutoInstall 'auto-instalar liga'
+
+    Click $ui.BtnLogToggle 'BtnLogToggle (abre)'
+    Assert-Equal 'Visible' ([string]$ui.LogBody.Visibility) 'log abre'
+    Assert-Equal 'FECHAR ▴' $ui.BtnLogToggle.Text 'texto muda para FECHAR'
+    Click $ui.BtnLogToggle 'BtnLogToggle (fecha)'
+    Assert-Equal 'Collapsed' ([string]$ui.LogBody.Visibility) 'log fecha'
+
     # ============================================================ 4. botões sem arquivo
     Write-Host ''
     Write-Host '4. INSTALAR / SIMULAR sem arquivo (tem que avisar, não quebrar)' -ForegroundColor Cyan
@@ -229,6 +249,11 @@ try {
     # um disco real. Se algo falhar, o teste morre em vez de gravar no pendrive.
     $S.Drive = $letter
     if ($S.Drive -ne $letter) { throw "não consegui fixar a unidade de teste ${letter}:" }
+
+    # Fluxo manual daqui até a seção 13: desliga o auto-instalar para o hot-plug
+    # da seção 12 não começar a copiar sozinho em outra unidade.
+    $ui.BtnAuto.IsChecked = $false
+    $S.AutoInstall = $false
 
     Click $ui.BtnInstall 'BtnInstall'
     Assert-Equal 'Collapsed' $ui.Overlay.Visibility 'INSTALAR sem arquivo não abre confirmação'
@@ -582,6 +607,57 @@ try {
     Click $ui.TabOpl 'TabOpl'
     Pump 200
     Assert-Equal 'Visible' ([string]$ui.OplView.Visibility) 'voltou para a aba OPL'
+
+    # ============================================================ 13b. arrastar compactado instala sozinho
+    Write-Host ''
+    Write-Host '13b. ZIP/RAR: arrastar instala sozinho' -ForegroundColor Cyan
+
+    Assert-Equal $letter $S.Drive "unidade virtual ainda selecionada para o teste de ZIP"
+
+    $ui.BtnAuto.IsChecked = $true
+    $S.AutoInstall = $true
+    Assert-True $S.AutoInstall 'auto-instalar religado para o teste de ZIP/RAR'
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    $src = Join-Path $work 'compactado'
+    New-Item -ItemType Directory -Force $src | Out-Null
+    New-TestPs2Iso -Path (Join-Path $src 'Jogo Zip (SLUS_215.98).iso') -Serial 'SLUS_215.98'
+
+    $zip = Join-Path $work 'Jogo Zip.zip'
+    [IO.Compression.ZipFile]::CreateFromDirectory($src, $zip)
+
+    $before = $S.Games.Count
+    Add-DroppedFiles -Files @($zip) -Auto
+    Assert-True ($S.Busy -or $S.Extract) 'ZIP começou a ser extraído'
+    Wait-Idle
+    Pump 400
+
+    Assert-Equal ($before + 1) $S.Games.Count 'ZIP instalou sozinho'
+    Assert-True ([bool]($S.Games | Where-Object { $_.Nome -eq 'Jogo Zip' })) 'nome do jogo veio do ZIP'
+    Assert-Equal 0 $S.Files.Count 'lista limpa depois de instalar do ZIP'
+    Assert-Equal 0 @($S.TempRoots).Count 'temporário do ZIP apagado'
+    Assert-True ((Get-LogText) -match 'Extraindo') 'log registrou a extração'
+
+    $rarExe = 'C:\Program Files\WinRAR\Rar.exe'
+    if (Test-Path -LiteralPath $rarExe) {
+        New-TestPs2Iso -Path (Join-Path $src 'Jogo Rar (SLUS_215.99).iso') -Serial 'SLUS_215.99'
+        $rar = Join-Path $work 'Jogo Rar.rar'
+        & $rarExe a -idq -ep1 $rar (Join-Path $src 'Jogo Rar (SLUS_215.99).iso')
+        Assert-Equal 0 $LASTEXITCODE 'RAR de teste criado'
+
+        $before = $S.Games.Count
+        Add-DroppedFiles -Files @($rar) -Auto
+        Wait-Idle
+        Pump 400
+
+        Assert-Equal ($before + 1) $S.Games.Count 'RAR instalou sozinho'
+        Assert-True ([bool]($S.Games | Where-Object { $_.Nome -eq 'Jogo Rar' })) 'nome do jogo veio do RAR'
+        Assert-Equal 0 $S.Files.Count 'lista limpa depois de instalar do RAR'
+        Assert-Equal 0 @($S.TempRoots).Count 'temporário do RAR apagado'
+    } else {
+        Write-Host '  (WinRAR ausente: teste de RAR pulado)' -ForegroundColor DarkGray
+    }
 # ============================================================ 14. nenhum erro de handler
     Write-Host ''
     Write-Host '14. Nenhum handler lançou exceção' -ForegroundColor Cyan

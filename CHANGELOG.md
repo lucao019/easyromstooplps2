@@ -4,6 +4,39 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.5.0] — 2026-10-29
+
+### Adicionado
+
+- **Arrastar e instalar.** Solte o jogo na janela e ele já vai para o pendrive:
+  - aceita **`.iso`**, **`.zip`**, **`.rar`** (inclusive multi-volume), **`.7z`** e
+    **pastas** (procura até 2 níveis);
+  - o compactado é extraído em segundo plano, sem travar a janela, e o `.iso`
+    encontrado entra na fila;
+  - com **INSTALAR AO SOLTAR** ligado (padrão), a cópia começa sozinha assim que o
+    ISO é reconhecido. Sem pendrive, o jogo fica na lista e a instalação começa
+    quando a unidade aparecer;
+  - o temporário da extração é apagado depois de instalar (ou ao fechar o app);
+  - ZIP usa o próprio Windows; RAR usa o `UnRAR` do WinRAR; 7Z usa o 7-Zip; e o
+    `tar` do Windows serve de reserva. Sem nenhum deles, o app avisa e pede para
+    extrair manualmente.
+- **`tools/Test-OplPendrive.ps1`** — verificador que reproduz no Windows o que o
+  OPL faz ao abrir a unidade USB: lê o `ul.cfg` (64 bytes por registro), recalcula
+  o CRC do nome, confere os pedaços (1 GiB, numeração e sobras) e abre cada ISO de
+  `DVD\` (ISO9660, PVD, `SYSTEM.CNF`, `BOOT2` e o executável apontado por ele).
+  Sai com código 1 se algo que o OPL não abriria for encontrado. Testado no
+  pendrive real (6 jogos, 17 verificações OK) e num pendrive falso quebrado
+  (detectou pedaço faltando, tamanho errado, pedaço sobrando e ISO inválido).
+
+### Alterado
+
+- **Tela mais limpa.** Saiu o painel "FLUXO" de 4 passos; os textos longos viraram
+  tooltip; o **LOG** começa fechado (abre no cabeçalho) e o aviso legal foi para a
+  barra de status. A lista de jogos ganhou mais espaço.
+- O modo **DVD** também pede confirmação antes de substituir um ISO que já existe
+  em `DVD\`.
+- Testes: **147 asserções de UI** (ZIP e RAR instalando sozinhos) e **184 no total**.
+
 ## [1.4.0] — 2026-10-28
 
 ### Adicionado

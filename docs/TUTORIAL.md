@@ -109,10 +109,18 @@ Se você não quer terminal:
 
 1. Duplo clique em **`EasyRomsToOPL.cmd`**.
 2. Confira o chip do pendrive em **PENDRIVE** (o removível é escolhido sozinho).
-3. **Arraste os `.iso`** para a área pontilhada.
-4. Veja o serial que apareceu — se estiver vazio ou vermelho, o ISO não serve.
-5. Escolha o modo (**UL.\* (1 GiB)** quase sempre) e o nome no menu.
-6. Clique em **SIMULAR** para ver o plano; depois **INSTALAR NO PENDRIVE**.
+3. **Arraste o jogo para a janela** — `.iso`, `.zip`, `.rar`, `.7z` ou uma pasta.
+4. Com **INSTALAR AO SOLTAR** ligado (padrão), ele extrai o compactado e já começa a
+   gravar: um arrasto, nenhum clique. Soltou antes de plugar o pendrive? O jogo espera
+   na lista e instala quando a unidade aparecer.
+5. Veja o serial que apareceu — se estiver vazio ou vermelho, o ISO não serve.
+6. Escolha o modo (**UL.\* (1 GiB)** quase sempre) e o nome no menu.
+7. Quer revisar antes? Desligue **INSTALAR AO SOLTAR**, use **SIMULAR** para ver o
+   plano e depois **INSTALAR NO PENDRIVE**.
+
+> ZIP é extraído pelo próprio Windows. Para `.rar` o app usa o **UnRAR** (instalado com o
+> WinRAR); para `.7z`, o **7-Zip** ou o `tar` do Windows. Sem nenhum deles, o app avisa e
+> você pode extrair o `.iso` manualmente.
 
 O log mostra cada pedaço gravado. Ao terminar, a lista **JOGOS NA UNIDADE** já aparece
 atualizada — se o jogo está ali, o PS2 vai enxergar. O resto deste passo é o caminho CLI,
