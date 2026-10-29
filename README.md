@@ -6,7 +6,7 @@
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![PS2](https://img.shields.io/badge/PlayStation%202-OPL%20USB-003791?logo=playstation&logoColor=white)
 ![GUI](https://img.shields.io/badge/interface-WPF%20nativa-8BE9FD)
-![Testes](https://img.shields.io/badge/testes-199%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-224%20passando-brightgreen)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 
 **Interface gráfica** (arrastar e soltar) e **CLI** — as duas usando o mesmo motor.
@@ -38,12 +38,20 @@ Sem instalação, sem Electron, sem runtime extra: é WPF nativo do Windows.
 - **BIBLIOTECA** — clique na unidade e a aba abre sozinha, com **todos os jogos**
   que existem nela: etiqueta de plataforma, pasta e tamanho. Cobre PS2, PS1, SNES,
   N64, GBA, GB/GBC, NDS, GC/Wii, Mega Drive, Master System, NES, PSP e Dreamcast.
-  O botão **+** de um jogo de PS2 manda o jogo direto para a lista de instalação.
   PS1 e Nintendo aparecem só para consulta — **o OPL executa apenas PS2**.
+- **Instalado x para instalar, sem adivinhação.** A coluna **STATUS** e os filtros
+  **TUDO / INSTALADOS / PARA INSTALAR / OUTROS**, todos com contagem, dizem o que já
+  está no pendrive e o que ainda pode entrar. Cada linha mostra `INSTALADO`, `JÁ NO
+  OPL` (o arquivo é uma cópia de um jogo que já está em `ul.*`, reconhecido pelo
+  serial) ou o botão **INSTALAR**. O cabeçalho resume:
+  `7 JOGO(S) · 6 INSTALADO(S) · 1 PARA INSTALAR`.
 - **Compactados na biblioteca.** `.zip`, `.rar` (inclusive multi-volume) e `.7z`
   aparecem com o que têm dentro (`… · 1 jogo(s) dentro · God of War.iso`). O app lê
-  só o índice do arquivo — nada é extraído só para listar — e o **+** extrai e
-  instala o jogo de dentro.
+  só o índice do arquivo — nada é extraído só para listar — e o **INSTALAR** extrai
+  e instala o jogo de dentro.
+- **A fila avisa antes de copiar de novo.** Um ISO que já está no pendrive entra na
+  lista com a etiqueta **JÁ** e a dica "Já está tudo no OPL — INSTALAR pergunta antes
+  de substituir". Depois de instalar, o jogo sai da fila.
 - Botão **ISO** remonta os pedaços de um jogo em `.iso` único (para PCSX2 ou backup).
 - Botão **✕** remove um jogo (pedaços + entrada do `ul.cfg`), com confirmação.
 - Os chips mostram o **tipo de cada unidade** (`F: PENDRIVE`, `E: SSD`, `H: HD`) —
@@ -52,7 +60,7 @@ Sem instalação, sem Electron, sem runtime extra: é WPF nativo do Windows.
   aparece/some sozinha em até 1 s, sem precisar clicar em RECARREGAR. Se o pendrive
   selecionado sair, o app avisa e escolhe outro automaticamente.
 
-![Biblioteca de jogos por plataforma](docs/screenshot-biblioteca.png)
+![Biblioteca de jogos: o que está instalado e o que pode ser instalado](docs/screenshot-biblioteca.png)
 
 O visual segue os tokens do `terminal.css` (a biblioteca de componentes usada como
 referência): fundo `#050505`, ciano `#8BE9FD`, JetBrains Mono com fallback para
@@ -128,7 +136,7 @@ Nada de dependências: nem Node, nem Electron, nem módulo PowerShell.
 
 ### Instalador (recomendado)
 
-Baixe **`dist/Instalar-EasyRomsToOPL.cmd`** (um arquivo só, ~170 KB) e dê duplo clique.
+Baixe **`dist/Instalar-EasyRomsToOPL.cmd`** (um arquivo só, ~245 KB) e dê duplo clique.
 Ele instala em `%LOCALAPPDATA%\EasyRomsToOPL` e cria os atalhos:
 
 - **Área de Trabalho** → `EasyRomsToOPL`
@@ -280,7 +288,7 @@ separado (`gui/Worker.ps1`) para não travar a janela.
 # 20 asserções do worker da GUI: instala, exporta, cancela
 .\tests\Test-GuiWorker.ps1
 
-# 162 asserções da interface: clica em todo controle, instala, remove e varre a unidade
+# 187 asserções da interface: clica em todo controle, instala, remove e varre a unidade
 .\tests\Test-GuiUi.ps1
 ```
 
@@ -311,15 +319,18 @@ O painel do dispositivo é testado de verdade: escreve 16 MB na unidade virtual 
 clicar em nada** e espera o texto de usado/livre mudar sozinho — é assim que o teste
 prova que o número é em tempo real e não uma foto do momento em que a tela abriu.
 
-A seção da biblioteca monta uma árvore de ROMs (PS1, SNES, N64, GBA, NDS, GC) e um ISO de
-PS2 **sintético** (ISO9660 + `SYSTEM.CNF`, gerado na hora), para conferir a classificação
-de cada plataforma, a leitura do serial de dentro da imagem, o `.cue`/`.bin` sem
-duplicata e o botão **+** colocando o jogo certo na fila de instalação.
+A seção da biblioteca monta uma árvore de ROMs (PS1, SNES, N64, GBA, NDS, GC) e dois ISOs
+de PS2 **sintéticos** (ISO9660 + `SYSTEM.CNF`, gerados na hora), para conferir a
+classificação de cada plataforma, a leitura do serial de dentro da imagem, o `.cue`/`.bin`
+sem duplicata, o **STATUS** de cada linha (um ISO com o serial que já está no `ul.cfg`
+nasce `JÁ NO OPL`; um jogo novo nasce com o botão **INSTALAR**), os quatro filtros com
+contagem e a fila sendo limpa depois de instalar.
 
 A última seção cria um **ZIP**, um **RAR** e um **7Z** com ISOs sintéticos: solta o ZIP e
 o RAR na janela (extração em segundo plano, instalação automática, nome correto e
 temporário apagado) e abre os três na **biblioteca**, conferindo que o jogo de dentro é
-listado, que o serial vem do nome do ISO interno e que o **+** do ZIP extrai e instala.
+listado, que o serial vem do nome do ISO interno e que o **INSTALAR** do ZIP extrai e
+instala.
 
 ```powershell
 # discos com erro de I/O conhecido podem ser pulados
@@ -356,7 +367,7 @@ easyromstooplps2/
 ├── Instalar-EasyRomsToOPL.ps1 # instalador: copia, cria atalhos, desinstala
 ├── Instalar-EasyRomsToOPL.cmd # instalador (duplo clique)
 ├── dist/
-│   └── Instalar-EasyRomsToOPL.cmd  # instalador de arquivo único (~170 KB)
+│   └── Instalar-EasyRomsToOPL.cmd  # instalador de arquivo único (~245 KB)
 ├── lib/
 │   ├── UlFormat.ps1           # CRC, entrada de 64 bytes, ISO9660, motor de instalação
 │   └── GameLibrary.ps1        # varredura da unidade: jogos por plataforma
@@ -372,13 +383,13 @@ easyromstooplps2/
 ├── tests/
 │   ├── Test-UlFormat.ps1      # 17 asserções do formato
 │   ├── Test-GuiWorker.ps1     # 20 asserções do worker da GUI
-│   └── Test-GuiUi.ps1         # 162 asserções clicando em todo controle
+│   └── Test-GuiUi.ps1         # 187 asserções clicando em todo controle
 ├── docs/
 │   ├── TUTORIAL.md            # passo a passo do zero (pendrive + FMCB + OPL)
 │   ├── UL-FORMAT.md           # especificação do formato ul.* / ul.cfg
 │   ├── CASE-STUDY.md          # diagnóstico de um pendrive real de 64 GB
 │   ├── screenshot.png         # captura da interface (aba OPL)
-│   └── screenshot-biblioteca.png  # captura da biblioteca por plataforma
+│   └── screenshot-biblioteca.png  # captura da biblioteca (instalado x para instalar)
 ├── CHANGELOG.md
 └── LICENSE
 ```

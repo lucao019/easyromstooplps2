@@ -56,7 +56,7 @@ $ui = @{}
     'Root', 'DropZone', 'DropTitle', 'FileCount', 'BtnClearFiles', 'FilesPanel', 'DeviceName',
     'NameBox', 'BtnInstall', 'HintText', 'DrivesPanel', 'DriveCount', 'StatSpace',
     'StatGames', 'Bar', 'BarText', 'BarPct', 'BtnRefresh', 'GamesPanel', 'BtnCopyLog', 'LogBox',
-    'LogHeader', 'LogBody', 'BtnLogToggle', 'BtnAuto',
+    'LogHeader', 'LogBody', 'BtnLogToggle', 'BtnAuto', 'LibFilters',
     'StatusText', 'BusyDot', 'Toasts', 'Overlay', 'ConfirmTitle', 'ConfirmText', 'BtnCancelConfirm',
     'BtnYesConfirm', 'BtnMin', 'BtnMax', 'BtnClose', 'VersionText',
     'TabOpl', 'TabLibrary', 'LibraryInfo', 'OplView', 'LibraryView', 'LibraryPanel'
@@ -88,6 +88,8 @@ $S = @{
     LibScan    = $null          # runspace da varredura em andamento
     LibTimer   = $null
     LibView    = 'opl'          # aba visivel: opl | library
+    LibFilter  = 'all'          # filtro da biblioteca: all | installed | pending | other
+    LibCounts  = $null          # { all, installed, pending, other } da última varredura
     AutoInstall = $true         # soltar o jogo já inicia a instalação
     Extract    = $null          # extração de .zip/.rar/.7z em andamento
     ExtractQueue = New-Object System.Collections.ArrayList
@@ -619,16 +621,23 @@ function Render-Files {
         return
     }
 
+    $installed = Get-InstalledSerials
+
     $ui.FileCount.Text = ('{0} ARQUIVO(S) · {1}' -f $S.Files.Count, (Format-Size (($S.Files | Measure-Object Size -Sum).Sum)))
     $ui.NameBox.IsEnabled = ($S.Files.Count -eq 1)
 
-    if ($S.Files.Count -eq 1) {
+    $allThere = @($S.Files | Where-Object { -not ($_.Valid -and $_.Serial -and $installed.ContainsKey([string]$_.Serial)) }).Count -eq 0
+    if ($allThere) {
+        $ui.HintText.Text = 'Já está tudo no OPL — INSTALAR pergunta antes de substituir.'
+    } elseif ($S.Files.Count -eq 1) {
         $ui.HintText.Text = 'O nome acima vai para o menu do OPL.'
     } else {
         $ui.HintText.Text = 'Vários jogos: cada um usa o próprio nome de arquivo no menu.'
     }
 
     foreach ($f in $S.Files) {
+        $already = [bool]($f.Valid -and $f.Serial -and $installed.ContainsKey([string]$f.Serial))
+
         $border = New-Object Windows.Controls.Border
         $border.BorderBrush = Br '#1E1E1E'
         $border.BorderThickness = New-Object Windows.Thickness(0, 0, 0, 1)
@@ -657,6 +666,7 @@ function Render-Files {
         $meta.FontSize = 10
         if ($f.Valid) {
             $meta.Text = ('{0} · {1} · {2}' -f $f.Serial, (Format-Size $f.Size), $f.Ver)
+            if ($already) { $meta.Text += ' · JÁ NO OPL' }
             $meta.Foreground = Br '#666666'
         } else {
             $meta.Text = ('INVÁLIDO · ' + $f.Error)
@@ -667,8 +677,16 @@ function Render-Files {
         [void]$grid.Children.Add($stack)
 
         $tag = New-Object Windows.Controls.TextBlock
-        $tag.Text = if ($f.Valid) { 'OK' } else { 'ERR' }
-        $tag.Foreground = if ($f.Valid) { Br '#50FA7B' } else { Br '#FF5555' }
+        if (-not $f.Valid) {
+            $tag.Text = 'ERR'
+            $tag.Foreground = Br '#FF5555'
+        } elseif ($already) {
+            $tag.Text = 'JÁ'
+            $tag.Foreground = Br '#F1FA8C'
+        } else {
+            $tag.Text = 'OK'
+            $tag.Foreground = Br '#50FA7B'
+        }
         $tag.FontSize = 9
         $tag.FontWeight = 'Bold'
         $tag.VerticalAlignment = 'Center'
@@ -1045,6 +1063,7 @@ function Load-Games {
         $t.Margin = New-Object Windows.Thickness(0, 8, 0, 0)
         [void]$ui.GamesPanel.Children.Add($t)
         Update-Space
+        Update-OplInfo
         return
     }
 
@@ -1119,11 +1138,22 @@ function Load-Games {
     }
 
     Update-Space
+    Update-OplInfo
 }
 
 # ---------------------------------------------------------------- biblioteca
 # Varre a unidade em segundo plano e lista os jogos de todas as plataformas
 # (PS2, PS1, SNES, N64, GBA...). O OPL executa só PS2: o resto é consulta.
+
+function Update-OplInfo {
+    <# Quantos jogos já estão no pendrive e em que formato (ul.* ou DVD\). #>
+    if ($S.LibView -ne 'opl') { return }
+    if (-not $S.Drive) { $ui.LibraryInfo.Text = ''; return }
+
+    $ul = @($S.Games | Where-Object { $_.Tipo -eq 'ul' }).Count
+    $dvd = @($S.Games | Where-Object { $_.Tipo -eq 'dvd' }).Count
+    $ui.LibraryInfo.Text = ('{0} JOGO(S) · {1} NO OPL (UL.*) · {2} EM DVD\' -f ($ul + $dvd), $ul, $dvd)
+}
 
 function Set-GamesView {
     param([string]$View)
@@ -1133,6 +1163,8 @@ function Set-GamesView {
     $ui.LibraryView.Visibility = $(if ($View -eq 'library') { [Windows.Visibility]::Visible } else { [Windows.Visibility]::Collapsed })
     $ui.TabOpl.IsChecked = ($View -eq 'opl')
     $ui.TabLibrary.IsChecked = ($View -eq 'library')
+
+    if ($View -eq 'opl') { Update-OplInfo } else { Render-Library }
 }
 
 function Get-PlatformColor {
@@ -1200,7 +1232,7 @@ function Start-LibraryScan {
     $S.LibLetter = $letter
     $S.Lib = @()
     $S.LibReport = $null
-    $ui.LibraryInfo.Text = 'VARRENDO...'
+    if ($S.LibView -eq 'library') { $ui.LibraryInfo.Text = 'VARRENDO...' }
     Show-LibraryMessage ('PROCURANDO JOGOS EM {0}:...' -f $letter) '#8BE9FD'
 
     $ulPath = Join-Path $repoRoot 'lib\UlFormat.ps1'
@@ -1277,8 +1309,23 @@ function Update-LibraryScan {
     Render-Library
 }
 
+function Get-InstalledSerials {
+    <#
+        Seriais que já estão no pendrive: os do ul.cfg (ul.*) e os dos ISOs de
+        DVD\. Serve para reconhecer o mesmo jogo mesmo quando ele está em outro
+        arquivo (uma cópia em ROMs\PS2, por exemplo) — aí a linha já nasce
+        INSTALADA em vez de oferecer instalar de novo.
+    #>
+    $set = @{}
+    foreach ($g in @($S.Games)) {
+        if ($g.Serial -and $g.Serial -ne '—') { $set[[string]$g.Serial] = $true }
+    }
+    return $set
+}
+
 function Get-LibraryRows {
     $rows = New-Object System.Collections.ArrayList
+    $serials = Get-InstalledSerials
 
     # Jogos já instalados no formato do OPL (ul.*)
     foreach ($g in @($S.Games)) {
@@ -1286,7 +1333,8 @@ function Get-LibraryRows {
             [void]$rows.Add([pscustomobject]@{
                 Platform = 'PS2'; Label = 'PS2'; Name = $g.Nome
                 Rel = 'INSTALADO NO OPL (UL.*)'; Size = [double]0; SizeText = '—'
-                Instalado = $true; File = $null; Serial = $g.Serial
+                Instalado = $true; Status = 'installed'; Where = 'OPL (UL.*)'
+                File = $null; Serial = $g.Serial
             })
         }
     }
@@ -1294,24 +1342,79 @@ function Get-LibraryRows {
     # Jogos soltos encontrados na unidade (inclui os do modo DVD e os compactados)
     $dvd = @($S.Games | Where-Object { $_.Tipo -eq 'dvd' } | ForEach-Object { $_.Path })
     foreach ($it in @($S.Lib)) {
+        $status = 'other'
+        $where = ''
+        if ($dvd -contains $it.File) {
+            $status = 'installed'; $where = 'DVD\'
+        } elseif ($it.Platform -eq 'PS2') {
+            if ($it.Serial -and $serials.ContainsKey([string]$it.Serial)) {
+                # o arquivo é o mesmo jogo que já está em ul.*: nada a instalar
+                $status = 'installed'; $where = 'COPIA'
+            } else {
+                $status = 'pending'
+            }
+        }
+
         [void]$rows.Add([pscustomobject]@{
             Platform = $it.Platform; Label = $it.PlatformLabel; Name = $it.Name
             Rel = $it.Rel; Size = $it.Size; SizeText = (Format-Size $it.Size)
-            Instalado = ($dvd -contains $it.File); File = $it.File; Serial = $it.Serial
+            Instalado = ($status -eq 'installed'); Status = $status; Where = $where
+            File = $it.File; Serial = $it.Serial
             Container = ($it.Kind -eq 'archive'); Inner = $it.Inner; InnerCount = $it.InnerCount
         })
     }
 
-    return @($rows | Sort-Object @{ e = { Get-GamePlatformRank $_.Platform } }, Name)
+    return @($rows | Sort-Object @{ e = { Get-GamePlatformRank $_.Platform } }, @{ e = { $_.Status -eq 'pending' } }, Name)
+}
+
+function Update-LibFilters {
+    <#
+        Chips de filtro com a contagem de cada grupo. O usuário vê de cara
+        quantos jogos já estão no pendrive e quantos ainda pode instalar.
+    #>
+    param($Counts)
+
+    $defs = @(
+        @{ Id = 'all';       Label = 'TUDO';          Tip = 'Tudo que existe na unidade' },
+        @{ Id = 'installed'; Label = 'INSTALADOS';    Tip = 'Já aparecem no menu do OPL (ul.*) ou estão em DVD\' },
+        @{ Id = 'pending';   Label = 'PARA INSTALAR'; Tip = 'Jogos de PS2 que ainda não estão no OPL' },
+        @{ Id = 'other';     Label = 'OUTROS';        Tip = 'PS1 e Nintendo: só consulta, o OPL executa apenas PS2' }
+    )
+
+    $ui.LibFilters.Children.Clear()
+    foreach ($d in $defs) {
+        $n = [int]$Counts[$d.Id]
+        $chip = New-Object Windows.Controls.Primitives.ToggleButton
+        $chip.Style = $win.FindResource('Chip')
+        $chip.Tag = $d.Id
+        $chip.Content = ('{0} ({1})' -f $d.Label, $n)
+        $chip.ToolTip = $d.Tip
+        $chip.IsChecked = ($S.LibFilter -eq $d.Id)
+        $chip.Add_Click({
+            param($sender, $e)
+            $S.LibFilter = [string]$sender.Tag
+            Render-Library
+        })
+        [void]$ui.LibFilters.Children.Add($chip)
+    }
 }
 
 function Render-Library {
     $ui.LibraryPanel.Children.Clear()
 
-    $rows = @(Get-LibraryRows)
+    $all = @(Get-LibraryRows)
 
-    if ($rows.Count -eq 0) {
-        $ui.LibraryInfo.Text = '0 JOGOS'
+    $counts = @{
+        all       = $all.Count
+        installed = @($all | Where-Object { $_.Status -eq 'installed' }).Count
+        pending   = @($all | Where-Object { $_.Status -eq 'pending' }).Count
+        other     = @($all | Where-Object { $_.Status -eq 'other' }).Count
+    }
+    $S.LibCounts = $counts
+    Update-LibFilters $counts
+
+    if ($all.Count -eq 0) {
+        if ($S.LibView -eq 'library') { $ui.LibraryInfo.Text = '0 JOGO(S)' }
         if (-not $S.Drive) {
             Show-LibraryMessage 'SELECIONE UMA UNIDADE'
         } else {
@@ -1320,11 +1423,29 @@ function Render-Library {
         return
     }
 
-    $platforms = @($rows | ForEach-Object { $_.Platform } | Select-Object -Unique).Count
-    if ($S.LibReport -and $S.LibReport.Truncated) {
-        $ui.LibraryInfo.Text = ('MOSTRANDO {0} (LIMITE)' -f $rows.Count)
-    } else {
-        $ui.LibraryInfo.Text = ('{0} JOGO(S) · {1} PLATAFORMA(S)' -f $rows.Count, $platforms)
+    if ($S.LibView -eq 'library') {
+        $info = ('{0} JOGO(S) · {1} INSTALADO(S) · {2} PARA INSTALAR' -f $all.Count, $counts.installed, $counts.pending)
+        if ($counts.other -gt 0) { $info += (' · {0} OUTRO(S)' -f $counts.other) }
+        if ($S.LibReport -and $S.LibReport.Truncated) { $info = 'MOSTRANDO ' + $info }
+        $ui.LibraryInfo.Text = $info
+    }
+
+    $rows = switch ($S.LibFilter) {
+        'installed' { @($all | Where-Object { $_.Status -eq 'installed' }) }
+        'pending'   { @($all | Where-Object { $_.Status -eq 'pending' }) }
+        'other'     { @($all | Where-Object { $_.Status -eq 'other' }) }
+        default     { $all }
+    }
+
+    if ($rows.Count -eq 0) {
+        $msg = switch ($S.LibFilter) {
+            'installed' { 'NADA INSTALADO NESTA UNIDADE`n`nSolte um jogo ou veja PARA INSTALAR.' }
+            'pending'   { 'NADA PARA INSTALAR`n`nTodo jogo de PS2 desta unidade já está no OPL.' }
+            'other'     { 'NENHUM JOGO DE OUTRA PLATAFORMA NESTA UNIDADE' }
+            default     { 'NENHUM JOGO' }
+        }
+        Show-LibraryMessage $msg
+        return
     }
 
     foreach ($r in $rows) {
@@ -1408,20 +1529,27 @@ function Render-Library {
         [Windows.Controls.Grid]::SetColumn($sz, 2)
         [void]$grid.Children.Add($sz)
 
-        # ação
-        if ($r.Instalado) {
+        # status / ação: INSTALADO (já no OPL), JÁ NO OPL (cópia) ou INSTALAR
+        if ($r.Status -eq 'installed') {
             $act = New-Object Windows.Controls.TextBlock
-            $act.Text = 'OPL'
+            $act.Text = $(if ($r.Where -eq 'COPIA') { 'JÁ NO OPL' } else { 'INSTALADO' })
             $act.Foreground = Br '#50FA7B'
             $act.FontSize = 9
             $act.FontWeight = 'Bold'
             $act.VerticalAlignment = 'Center'
-        } elseif ($r.Platform -eq 'PS2' -and $r.File) {
+            $act.ToolTip = $(switch ($r.Where) {
+                'COPIA'     { 'Este arquivo é o mesmo jogo que já está instalado em ul.*' }
+                'DVD\'      { 'Está em DVD\ — o OPL lê esse ISO direto, sem instalar' }
+                default     { 'Já aparece no menu do OPL' }
+            })
+        } elseif ($r.Status -eq 'pending' -and $r.File) {
             $act = New-Object Windows.Controls.Button
             $act.Style = $win.FindResource('BtnTiny')
-            $act.Content = '+'
+            $act.Content = 'INSTALAR'
+            $act.Foreground = Br '#8BE9FD'
+            $act.BorderBrush = Br '#2B5F6B'
             $act.Tag = $r
-            $act.ToolTip = $(if ($r.Container) { 'Extrair o arquivo e instalar' } else { 'Adicionar à lista de instalação' })
+            $act.ToolTip = $(if ($r.Container) { 'Extrair o arquivo e instalar no OPL' } else { 'Adicionar à lista de instalação' })
             $act.Add_Click({ param($sender, $e) Add-LibraryGame $sender.Tag })
         } else {
             $act = New-Object Windows.Controls.TextBlock
@@ -1450,7 +1578,11 @@ function Add-LibraryGame {
         return
     }
     if ($Item.Instalado) {
-        Show-Toast 'Já está no pendrive' $Item.Name 'warn'
+        if ($Item.Where -eq 'COPIA') {
+            Show-Toast 'Já está no OPL' ('{0} é o mesmo jogo que já está instalado em ul.*' -f $Item.Name) 'warn'
+        } else {
+            Show-Toast 'Já está no pendrive' ('{0} já aparece no menu do OPL.' -f $Item.Name) 'warn'
+        }
         return
     }
     if (-not $Item.File) { return }
@@ -1615,7 +1747,22 @@ function Update-Worker {
         Load-Games
         Update-DriveChips
         Refresh-Library
-        if (-not $sync.Cancel -and $sync.Failed -eq 0) { Remove-InstalledTempFiles }
+        if (-not $sync.Cancel -and $sync.Failed -eq 0) {
+            Remove-InstalledTempFiles
+
+            # O jogo já está no pendrive: sai da fila, senão ele continuaria
+            # ali como se ainda faltasse instalar (e um INSTALAR sem querer
+            # copiaria tudo de novo).
+            $done = Get-InstalledSerials
+            $left = 0
+            foreach ($f in @($S.Files)) {
+                if ($f.Serial -and $done.ContainsKey([string]$f.Serial)) {
+                    [void]$S.Files.Remove($f)
+                    $left++
+                }
+            }
+            if ($left -gt 0) { Render-Files }
+        }
 
         # Load-Games recalcula o uso do disco; restaura o resultado da operação.
         if ($sync.Cancel) {

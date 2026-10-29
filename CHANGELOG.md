@@ -4,6 +4,32 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.7.0] — 2026-10-29
+
+### Adicionado
+
+- **Dá para ver de cara o que já está no pendrive e o que ainda pode ser instalado.**
+  A aba **BIBLIOTECA** ganhou a coluna **STATUS** e quatro filtros com contagem:
+  - **TUDO (7)** — todos os jogos da unidade;
+  - **INSTALADOS (6)** — o que já aparece no menu do OPL (`ul.*`) ou está em `DVD\`;
+  - **PARA INSTALAR (1)** — jogo de PS2 que ainda não está no OPL;
+  - **OUTROS (0)** — PS1 e Nintendo, que o OPL não executa (só consulta).
+
+  Cada linha diz o que é: `INSTALADO` (verde), `JÁ NO OPL` (o arquivo é uma cópia de
+  um jogo que já está em `ul.*`, reconhecido pelo serial) ou o botão **INSTALAR**.
+  O cabeçalho resume: `7 JOGO(S) · 6 INSTALADO(S) · 1 PARA INSTALAR`.
+- **Aba OPL também resume:** `6 JOGO(S) · 3 NO OPL (UL.*) · 3 EM DVD\`.
+- **Fila avisa antes de copiar de novo.** Um ISO que já está no pendrive entra na
+  lista com a etiqueta **JÁ** e o aviso "Já está tudo no OPL — INSTALAR pergunta
+  antes de substituir".
+
+### Alterado
+
+- **Depois de instalar, o jogo sai da fila.** Antes ele continuava ali como se ainda
+  faltasse copiar; agora a lista reflete o que de fato falta.
+- Testes: **187 asserções de UI** (status, filtros, cópia reconhecida por serial,
+  fila limpa após instalar) e **224 no total**.
+
 ## [1.6.0] — 2026-10-29
 
 ### Adicionado

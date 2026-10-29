@@ -467,6 +467,7 @@
               <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
               </Grid.RowDefinitions>
 
@@ -480,12 +481,16 @@
                 <TextBlock Grid.Column="0" Text="PLATAFORMA" Style="{StaticResource Section}" Margin="0"/>
                 <TextBlock Grid.Column="1" Text="JOGO" Style="{StaticResource Section}" Margin="0"/>
                 <TextBlock Grid.Column="2" Text="TAMANHO" Style="{StaticResource Section}" Margin="0,0,10,0"/>
+                <TextBlock Grid.Column="3" Text="STATUS" Style="{StaticResource Section}" Margin="0"/>
               </Grid>
 
-              <TextBlock Grid.Row="1" Margin="10,0,10,6" FontSize="9" Foreground="#555555" TextWrapping="Wrap"
-                         Text="O OPL EXECUTA APENAS PS2 · O RESTO É CONSULTA · ZIP/RAR/7Z MOSTRAM O JOGO DE DENTRO"/>
+              <!-- filtros: o que já está no pendrive x o que ainda pode ser instalado -->
+              <WrapPanel x:Name="LibFilters" Grid.Row="1" Orientation="Horizontal" Margin="10,0,10,4"/>
 
-              <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
+              <TextBlock Grid.Row="2" Margin="10,0,10,6" FontSize="9" Foreground="#555555" TextWrapping="Wrap"
+                         Text="INSTALADO = JÁ APARECE NO MENU DO OPL · + INSTALAR = AINDA NÃO ESTÁ · OUTROS = SÓ CONSULTA"/>
+
+              <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
                 <StackPanel x:Name="LibraryPanel"/>
               </ScrollViewer>
             </Grid>

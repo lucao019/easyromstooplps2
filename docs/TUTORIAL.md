@@ -137,17 +137,32 @@ atualizada — se o jogo está ali, o PS2 vai enxergar. O resto deste passo é o
 **Não sabe o que já tem no pendrive?** Clique na unidade e abra a aba **BIBLIOTECA**: o
 app varre a unidade e lista todos os jogos encontrados, separados por plataforma (PS2,
 PS1, SNES, N64, GBA, NDS, GC/Wii, Mega Drive, Master System, NES, PSP, Dreamcast), com
-pasta e tamanho. Jogos já instalados aparecem marcados `OPL`; em um jogo de PS2, o botão
-**+** coloca o jogo na lista de instalação. PS1 e Nintendo são **só consulta** — o OPL
-executa apenas jogos de PS2. A varredura roda em segundo plano e se refaz sozinha quando
-o pendrive entra ou sai.
+pasta e tamanho. A varredura roda em segundo plano e se refaz sozinha quando o pendrive
+entra ou sai.
+
+Na biblioteca você responde às duas perguntas de uma vez:
+
+- **O que já está instalado?** Os filtros **TUDO / INSTALADOS / PARA INSTALAR / OUTROS**
+  mostram a contagem de cada grupo, e o cabeçalho resume:
+  `7 JOGO(S) · 6 INSTALADO(S) · 1 PARA INSTALAR`. Na coluna **STATUS**:
+  - `INSTALADO` (verde) — já aparece no menu do OPL (`ul.*`) ou está em `DVD\`;
+  - `JÁ NO OPL` — este arquivo é uma cópia de um jogo que já está em `ul.*`; o app
+    reconhece pelo serial, então não oferece instalar de novo;
+  - **INSTALAR** (ciano) — jogo de PS2 que ainda não está no pendrive; o clique manda
+    para a fila.
+- **O que ainda pode ser instalado?** Filtre por **PARA INSTALAR**. É exatamente o que
+  falta. PS1 e Nintendo ficam em **OUTROS**: são **só consulta**, porque o OPL executa
+  apenas jogos de PS2.
 
 A biblioteca também entende **compactados**: `.zip`, `.rar` (inclusive os divididos em
 `.part1.rar`, `.part2.rar`…) e `.7z` aparecem como uma linha com o que têm dentro —
 `Jogo.zip · 1 jogo(s) dentro · Shadow of the Colossus.iso`. Só o índice do arquivo é
-lido para montar a lista; nada é extraído até você clicar no **+** (aí o app extrai e
-instala). Se o compactado estiver protegido por senha ou corrompido, ele aparece como
-**ARQUIVO** e o **+** avisa o motivo.
+lido para montar a lista; nada é extraído até você clicar em **INSTALAR** (aí o app
+extrai e instala). Se o compactado estiver protegido por senha ou corrompido, ele
+aparece como **ARQUIVO** e o botão avisa o motivo.
+
+Depois de instalar, o jogo **sai da lista de arquivos** e passa a aparecer como
+`INSTALADO` na biblioteca — a fila sempre reflete o que ainda falta copiar.
 
 ### 5.1 Clone a ferramenta
 

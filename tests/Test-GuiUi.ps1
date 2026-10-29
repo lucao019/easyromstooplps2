@@ -348,6 +348,23 @@ try {
     Assert-Equal 64 (Get-Item "${letter}:\ul.cfg").Length 'ul.cfg com uma entrada'
     Assert-Equal 'CONCLUÍDO' $ui.BarText.Text 'barra diz CONCLUÍDO'
     Assert-Equal 100 $ui.Bar.Value 'barra em 100%'
+    Assert-Equal 0 $S.Files.Count 'jogo instalado sai da fila (não fica como pendente)'
+
+    Click $ui.TabOpl 'TabOpl (resumo)'
+    Assert-True ([string]$ui.LibraryInfo.Text -match 'NO OPL') "aba OPL resume o que está instalado ($($ui.LibraryInfo.Text))"
+
+    # ============================================================ 7b. jogo já instalado na fila
+    Write-Host ''
+    Write-Host '7b. Jogo já instalado é marcado antes de copiar' -ForegroundColor Cyan
+
+    Add-DroppedFiles -Files @($isoFile.FullName)
+    Assert-Equal 1 $S.Files.Count 'o mesmo ISO volta para a lista'
+    $tag = $ui.FilesPanel.Children[0].Child.Children |
+        Where-Object { $_ -is [Windows.Controls.TextBlock] -and $_.Text -in 'OK', 'JÁ', 'ERR' } |
+        Select-Object -First 1
+    Assert-True ($null -ne $tag) 'a linha tem etiqueta de estado'
+    Assert-Equal 'JÁ' $tag.Text 'etiqueta avisa que já está no OPL'
+    Assert-True ([string]$ui.HintText.Text -match 'Já está tudo no OPL') "a dica avisa antes de instalar de novo ($($ui.HintText.Text))"
 
     # ============================================================ 8. remover arquivo da lista
     Write-Host ''
@@ -546,6 +563,10 @@ try {
 
     $ps2Iso = Join-Path $roms 'PS2\Jogo Teste (SLUS_215.97).iso'
     New-TestPs2Iso -Path $ps2Iso
+    # Mesmo serial do jogo instalado na seção 7: é uma cópia, não um jogo novo.
+    # A biblioteca tem que marcar JÁ NO OPL em vez de oferecer instalar.
+    $ps2Novo = Join-Path $roms 'PS2\Jogo Novo (SLUS_215.96).iso'
+    New-TestPs2Iso -Path $ps2Novo -Serial 'SLUS_215.96'
     [IO.File]::WriteAllBytes((Join-Path $roms 'PS1\Crash (SLUS_005.94).bin'), (New-Object byte[] 8192))
     [IO.File]::WriteAllBytes((Join-Path $roms 'PS1\Crash (SLUS_005.94).cue'), [Text.Encoding]::ASCII.GetBytes('FILE "Crash (SLUS_005.94).bin" BINARY'))
     [IO.File]::WriteAllBytes((Join-Path $roms 'SNES\Super Mario World.sfc'), (New-Object byte[] 8192))
@@ -580,25 +601,63 @@ try {
         Assert-True ($plats -contains $plat) "biblioteca encontrou $plat"
     }
 
-    $ps2 = $lib | Where-Object { $_.Platform -eq 'PS2' -and $_.Ext -eq '.iso' } | Select-Object -First 1
+    $ps2 = $lib | Where-Object { $_.Platform -eq 'PS2' -and $_.Ext -eq '.iso' -and $_.File -eq $ps2Iso } | Select-Object -First 1
     Assert-True ($null -ne $ps2) 'biblioteca encontrou o ISO de PS2'
     Assert-Equal 'SLUS_215.97' $ps2.Serial 'serial lido de dentro do ISO'
     Assert-True ($S.LibReport.IsoChecked -ge 1) 'o ISO de PS2 foi aberto e lido (não só o nome)'
     Assert-True (-not ($lib | Where-Object { $_.Ext -eq '.bin' })) '.bin escondido (fica só o .cue)'
     Assert-True ([bool]($lib | Where-Object { $_.Ext -eq '.cue' })) '.cue aparece na lista'
-    Assert-True ($ui.LibraryPanel.Children.Count -ge 7) 'linhas desenhadas na biblioteca'
+    Assert-True ($ui.LibraryPanel.Children.Count -ge 8) 'linhas desenhadas na biblioteca'
+
+    # ---- status: instalado x pode instalar
+    $counts = $S.LibCounts
+    Assert-Equal 4 $ui.LibFilters.Children.Count 'quatro filtros (tudo, instalados, para instalar, outros)'
+    Assert-Equal $counts.all ($counts.installed + $counts.pending + $counts.other) 'as contagens fecham com o total'
+    Assert-True ($counts.installed -ge 2) "conta os instalados ($($counts.installed))"
+    Assert-True ($counts.pending -ge 1) "conta o que pode ser instalado ($($counts.pending))"
+    Assert-True ([string]$ui.LibraryInfo.Text -match 'INSTALADO\(S\)') "cabeçalho resume instalados x pendentes ($($ui.LibraryInfo.Text))"
 
     $row = $ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.File -eq $ps2Iso } | Select-Object -First 1
     Assert-True ($null -ne $row) 'linha do ISO de PS2 na tela'
-    $plus = $row.Child.Children | Where-Object { $_ -is [Windows.Controls.Button] } | Select-Object -First 1
-    Assert-True ($null -ne $plus) 'botão + na linha do PS2'
+    Assert-Equal 'installed' $row.Tag.Status 'mesmo serial do ul.cfg = já instalado'
+    Assert-Equal 'COPIA' $row.Tag.Where 'a linha diz que é cópia do jogo instalado'
+    $rowText = @($row.Child.Children | Where-Object { $_ -is [Windows.Controls.TextBlock] } | ForEach-Object { $_.Text })
+    Assert-True ($rowText -contains 'JÁ NO OPL') 'a linha mostra JÁ NO OPL'
+    Assert-Equal 0 @($row.Child.Children | Where-Object { $_ -is [Windows.Controls.Button] }).Count 'não oferece instalar de novo'
+
+    $novoRow = $ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.File -eq $ps2Novo } | Select-Object -First 1
+    Assert-True ($null -ne $novoRow) 'linha do jogo novo na tela'
+    Assert-Equal 'pending' $novoRow.Tag.Status 'jogo de PS2 fora do ul.cfg = pode instalar'
+    $installBtn = $novoRow.Child.Children | Where-Object { $_ -is [Windows.Controls.Button] } | Select-Object -First 1
+    Assert-True ($null -ne $installBtn) 'botão INSTALAR na linha do jogo novo'
+    Assert-Equal 'INSTALAR' $installBtn.Content 'o botão diz o que faz'
 
     $before = $S.Files.Count
-    Click $plus 'botão + do PS2'
+    Click $installBtn 'INSTALAR do jogo novo'
     Assert-Equal ($before + 1) $S.Files.Count 'jogo entrou na lista de instalação'
-    Assert-Equal $ps2Iso $S.Files[$S.Files.Count - 1].Path 'é o ISO certo'
+    Assert-Equal $ps2Novo $S.Files[$S.Files.Count - 1].Path 'é o ISO certo'
     $S.Files.Clear()
     Render-Files
+
+    # ---- filtros
+    $pendingChip = $ui.LibFilters.Children | Where-Object { [string]$_.Tag -eq 'pending' } | Select-Object -First 1
+    Click $pendingChip 'filtro PARA INSTALAR'
+    Assert-Equal 'pending' $S.LibFilter 'filtro PARA INSTALAR ativo'
+    Assert-True ($ui.LibraryPanel.Children.Count -ge 1) 'filtro PARA INSTALAR tem linhas'
+    Assert-Equal 0 @($ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.Status -ne 'pending' }).Count 'só mostra o que falta instalar'
+
+    $installedChip = $ui.LibFilters.Children | Where-Object { [string]$_.Tag -eq 'installed' } | Select-Object -First 1
+    Click $installedChip 'filtro INSTALADOS'
+    Assert-Equal 'installed' $S.LibFilter 'filtro INSTALADOS ativo'
+    Assert-Equal 0 @($ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.Status -ne 'installed' }).Count 'só mostra o que já está no pendrive'
+
+    $otherChip = $ui.LibFilters.Children | Where-Object { [string]$_.Tag -eq 'other' } | Select-Object -First 1
+    Click $otherChip 'filtro OUTROS'
+    Assert-Equal 0 @($ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.Status -ne 'other' }).Count 'OUTROS só tem PS1/Nintendo'
+
+    $allChip = $ui.LibFilters.Children | Where-Object { [string]$_.Tag -eq 'all' } | Select-Object -First 1
+    Click $allChip 'filtro TUDO'
+    Assert-Equal 'all' $S.LibFilter 'voltou para TUDO'
 
     $snesRow = $ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.Platform -eq 'SNES' } | Select-Object -First 1
     $snesButtons = if ($snesRow) { @($snesRow.Child.Children | Where-Object { $_ -is [Windows.Controls.Button] }).Count } else { -1 }
