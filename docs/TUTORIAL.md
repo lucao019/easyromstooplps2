@@ -114,9 +114,17 @@ Se você não quer terminal:
 5. Escolha o modo (**UL.\* (1 GiB)** quase sempre) e o nome no menu.
 6. Clique em **SIMULAR** para ver o plano; depois **INSTALAR NO PENDRIVE**.
 
-O log mostra cada pedaço gravado. Ao terminar, a lista **JOGOS NO PENDRIVE** já aparece
+O log mostra cada pedaço gravado. Ao terminar, a lista **JOGOS NA UNIDADE** já aparece
 atualizada — se o jogo está ali, o PS2 vai enxergar. O resto deste passo é o caminho CLI,
 útil para automação e para entender o que a interface faz por baixo.
+
+**Não sabe o que já tem no pendrive?** Clique na unidade e abra a aba **BIBLIOTECA**: o
+app varre a unidade e lista todos os jogos encontrados, separados por plataforma (PS2,
+PS1, SNES, N64, GBA, NDS, GC/Wii, Mega Drive, Master System, NES, PSP, Dreamcast), com
+pasta e tamanho. Jogos já instalados aparecem marcados `OPL`; em um ISO de PS2, o botão
+**+** coloca o jogo na lista de instalação. PS1 e Nintendo são **só consulta** — o OPL
+executa apenas jogos de PS2. A varredura roda em segundo plano e se refaz sozinha quando
+o pendrive entra ou sai.
 
 ### 5.1 Clone a ferramenta
 

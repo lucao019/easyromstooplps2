@@ -474,32 +474,77 @@
 
             <Border Grid.Row="0" Style="{StaticResource PanelHeader}">
               <Grid>
-                <TextBlock Text="JOGOS NO PENDRIVE" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
+                <TextBlock Text="JOGOS NA UNIDADE" Foreground="{StaticResource Cyan}" FontSize="10" FontWeight="Bold"/>
                 <TextBlock x:Name="BtnRefresh" Text="RECARREGAR" Foreground="{StaticResource Muted}"
                            FontSize="10" HorizontalAlignment="Right" Cursor="Hand" TextDecorations="Underline"/>
               </Grid>
             </Border>
 
-            <!-- cabeçalho da tabela -->
-            <Grid Grid.Row="1" Margin="10,8,10,6">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2.4*"/>
-                <ColumnDefinition Width="1.5*"/>
-                <ColumnDefinition Width="0.7*"/>
-                <ColumnDefinition Width="0.6*"/>
-                <ColumnDefinition Width="1.1*"/>
-                <ColumnDefinition Width="Auto"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="NOME" Style="{StaticResource Section}" Margin="0"/>
-              <TextBlock Grid.Column="1" Text="SERIAL" Style="{StaticResource Section}" Margin="0"/>
-              <TextBlock Grid.Column="2" Text="MODO" Style="{StaticResource Section}" Margin="0"/>
-              <TextBlock Grid.Column="3" Text="PARTES" Style="{StaticResource Section}" Margin="0"/>
-              <TextBlock Grid.Column="4" Text="CRC" Style="{StaticResource Section}" Margin="0"/>
+            <!-- abas: OPL (instalados) / biblioteca (tudo que existe na unidade) -->
+            <Grid Grid.Row="1" Margin="10,8,10,0">
+              <StackPanel Orientation="Horizontal">
+                <ToggleButton x:Name="TabOpl" Style="{StaticResource Chip}" Content="OPL (UL.*)" IsChecked="True"/>
+                <ToggleButton x:Name="TabLibrary" Style="{StaticResource Chip}" Content="BIBLIOTECA"/>
+              </StackPanel>
+              <TextBlock x:Name="LibraryInfo" Text="" Style="{StaticResource Dim}"
+                         HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,0,6"/>
             </Grid>
 
-            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
-              <StackPanel x:Name="GamesPanel"/>
-            </ScrollViewer>
+            <!-- visão OPL -->
+            <Grid x:Name="OplView" Grid.Row="2">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+              </Grid.RowDefinitions>
+
+              <Grid Grid.Row="0" Margin="10,6,10,6">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="2.4*"/>
+                  <ColumnDefinition Width="1.5*"/>
+                  <ColumnDefinition Width="0.7*"/>
+                  <ColumnDefinition Width="0.6*"/>
+                  <ColumnDefinition Width="1.1*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="NOME" Style="{StaticResource Section}" Margin="0"/>
+                <TextBlock Grid.Column="1" Text="SERIAL" Style="{StaticResource Section}" Margin="0"/>
+                <TextBlock Grid.Column="2" Text="MODO" Style="{StaticResource Section}" Margin="0"/>
+                <TextBlock Grid.Column="3" Text="PARTES" Style="{StaticResource Section}" Margin="0"/>
+                <TextBlock Grid.Column="4" Text="CRC" Style="{StaticResource Section}" Margin="0"/>
+              </Grid>
+
+              <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
+                <StackPanel x:Name="GamesPanel"/>
+              </ScrollViewer>
+            </Grid>
+
+            <!-- visão BIBLIOTECA (todas as plataformas) -->
+            <Grid x:Name="LibraryView" Grid.Row="2" Visibility="Collapsed">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+              </Grid.RowDefinitions>
+
+              <Grid Grid.Row="0" Margin="10,6,10,4">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="72"/>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="PLATAFORMA" Style="{StaticResource Section}" Margin="0"/>
+                <TextBlock Grid.Column="1" Text="JOGO" Style="{StaticResource Section}" Margin="0"/>
+                <TextBlock Grid.Column="2" Text="TAMANHO" Style="{StaticResource Section}" Margin="0,0,10,0"/>
+              </Grid>
+
+              <TextBlock Grid.Row="1" Margin="10,0,10,6" FontSize="9" Foreground="#555555" TextWrapping="Wrap"
+                         Text="O OPL EXECUTA APENAS PS2 · PS1 E NINTENDO APARECEM SÓ PARA CONSULTA"/>
+
+              <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
+                <StackPanel x:Name="LibraryPanel"/>
+              </ScrollViewer>
+            </Grid>
           </Grid>
         </Border>
 

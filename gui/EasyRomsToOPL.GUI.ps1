@@ -43,6 +43,7 @@ trap {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $repoRoot 'lib\UlFormat.ps1')
+. (Join-Path $repoRoot 'lib\GameLibrary.ps1')
 
 # ---------------------------------------------------------------- carregar XAML
 
@@ -56,7 +57,8 @@ $ui = @{}
     'NameBox', 'BtnSimulate', 'BtnInstall', 'HintText', 'DrivesPanel', 'DriveCount', 'StatSpace',
     'StatGames', 'Bar', 'BarText', 'BarPct', 'BtnRefresh', 'GamesPanel', 'BtnCopyLog', 'LogBox',
     'StatusText', 'BusyDot', 'Toasts', 'Overlay', 'ConfirmTitle', 'ConfirmText', 'BtnCancelConfirm',
-    'BtnYesConfirm', 'BtnMin', 'BtnMax', 'BtnClose', 'VersionText'
+    'BtnYesConfirm', 'BtnMin', 'BtnMax', 'BtnClose', 'VersionText',
+    'TabOpl', 'TabLibrary', 'LibraryInfo', 'OplView', 'LibraryView', 'LibraryPanel'
 ) | ForEach-Object { $ui[$_] = $win.FindName($_) }
 
 # ---------------------------------------------------------------- estado
@@ -78,6 +80,12 @@ $S = @{
     Toasts     = New-Object System.Collections.ArrayList
     DriveProbe = @()            # ultima lista de unidades vista (hot-plug)
     DriveTimer = $null
+    Lib        = @()            # jogos encontrados na unidade (biblioteca)
+    LibLetter  = $null          # unidade varrida por ultimo
+    LibReport  = $null
+    LibScan    = $null          # runspace da varredura em andamento
+    LibTimer   = $null
+    LibView    = 'opl'          # aba visivel: opl | library
 }
 
 $BRUSH = @{}
@@ -296,6 +304,9 @@ function Update-DriveChips {
             Update-DriveChips
             Update-Space
             Load-Games
+            # Clicou na unidade: mostra direto os jogos que existem nela.
+            Set-GamesView 'library'
+            Refresh-Library
         })
         [void]$ui.DrivesPanel.Children.Add($chip)
     }
@@ -340,6 +351,7 @@ function Sync-Drives {
     Update-DriveChips
     Load-Games
     Update-Space
+    Refresh-Library
 
     $after = @($S.Drives | ForEach-Object { $_.Letter })
     $added = @($after | Where-Object { $before -notcontains $_ })
@@ -696,6 +708,377 @@ function Load-Games {
     Update-Space
 }
 
+# ---------------------------------------------------------------- biblioteca
+# Varre a unidade em segundo plano e lista os jogos de todas as plataformas
+# (PS2, PS1, SNES, N64, GBA...). O OPL executa só PS2: o resto é consulta.
+
+function Set-GamesView {
+    param([string]$View)
+
+    $S.LibView = $View
+    $ui.OplView.Visibility = $(if ($View -eq 'opl') { [Windows.Visibility]::Visible } else { [Windows.Visibility]::Collapsed })
+    $ui.LibraryView.Visibility = $(if ($View -eq 'library') { [Windows.Visibility]::Visible } else { [Windows.Visibility]::Collapsed })
+    $ui.TabOpl.IsChecked = ($View -eq 'opl')
+    $ui.TabLibrary.IsChecked = ($View -eq 'library')
+}
+
+function Get-PlatformColor {
+    param([string]$Platform)
+
+    switch ($Platform) {
+        'PS2'    { return '#8BE9FD' }
+        'PS1'    { return '#FF79C6' }
+        'SNES'   { return '#F1FA8C' }
+        'N64'    { return '#BD93F9' }
+        'GBA'    { return '#50FA7B' }
+        'GB'     { return '#FF79C6' }
+        'NDS'    { return '#8BE9FD' }
+        'GC'     { return '#BD93F9' }
+        'MEGA'   { return '#F1FA8C' }
+        'MASTER' { return '#F1FA8C' }
+        'NES'    { return '#FF5555' }
+        'PSP'    { return '#8BE9FD' }
+        'DC'     { return '#FFB86C' }
+        default  { return '#666666' }
+    }
+}
+
+function Show-LibraryMessage {
+    param([string]$Text, [string]$Color = '#666666')
+
+    $ui.LibraryPanel.Children.Clear()
+    $t = New-Object Windows.Controls.TextBlock
+    $t.Text = $Text
+    $t.Foreground = Br $Color
+    $t.FontSize = 10
+    $t.TextWrapping = 'Wrap'
+    $t.LineHeight = 16
+    $t.Margin = New-Object Windows.Thickness(0, 8, 0, 0)
+    [void]$ui.LibraryPanel.Children.Add($t)
+}
+
+function Stop-LibraryScan {
+    if ($S.LibTimer) {
+        try { $S.LibTimer.Stop() } catch { }
+        $S.LibTimer = $null
+    }
+    if ($S.LibScan) {
+        try { $S.LibScan.PowerShell.Stop() } catch { }
+        try { $S.LibScan.PowerShell.Dispose() } catch { }
+        try { $S.LibScan.Runspace.Dispose() } catch { }
+        $S.LibScan = $null
+    }
+}
+
+function Start-LibraryScan {
+    if (-not $S.Drive) {
+        $S.LibLetter = $null
+        $S.Lib = @()
+        $S.LibReport = $null
+        $ui.LibraryInfo.Text = ''
+        Show-LibraryMessage 'SELECIONE UMA UNIDADE'
+        return
+    }
+    if ($S.Busy) { return }
+
+    Stop-LibraryScan
+
+    $letter = $S.Drive
+    $S.LibLetter = $letter
+    $S.Lib = @()
+    $S.LibReport = $null
+    $ui.LibraryInfo.Text = 'VARRENDO...'
+    Show-LibraryMessage ('PROCURANDO JOGOS EM {0}:...' -f $letter) '#8BE9FD'
+
+    $ulPath = Join-Path $repoRoot 'lib\UlFormat.ps1'
+    $libPath = Join-Path $repoRoot 'lib\GameLibrary.ps1'
+
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.ApartmentState = 'STA'
+    $rs.ThreadOptions = 'ReuseThread'
+    $rs.Open()
+
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript({
+        param($UlPath, $LibPath, $Root, $MaxDepth, $Limit, $MaxIso)
+        . $UlPath
+        . $LibPath
+        Get-GameLibrary -Root $Root -MaxDepth $MaxDepth -Limit $Limit -MaxIsoChecks $MaxIso -Report
+    })
+    [void]$ps.AddArgument($ulPath)
+    [void]$ps.AddArgument($libPath)
+    [void]$ps.AddArgument("${letter}:\")
+    [void]$ps.AddArgument(4)
+    [void]$ps.AddArgument(800)
+    [void]$ps.AddArgument(60)
+
+    $handle = $ps.BeginInvoke()
+    $S.LibScan = [pscustomobject]@{
+        PowerShell = $ps
+        Runspace   = $rs
+        Handle     = $handle
+        Letter     = $letter
+    }
+
+    $timer = New-Object Windows.Threading.DispatcherTimer
+    $timer.Interval = [TimeSpan]::FromMilliseconds(250)
+    $timer.Add_Tick({ Update-LibraryScan })
+    $S.LibTimer = $timer
+    $timer.Start()
+}
+
+function Update-LibraryScan {
+    if (-not $S.LibScan) { return }
+
+    $scan = $S.LibScan
+    if (-not $scan.Handle.IsCompleted) { return }
+
+    $report = $null
+    try {
+        $out = @($scan.PowerShell.EndInvoke($scan.Handle))
+        $report = $out | Where-Object { $_ -and $_.PSObject.Properties['Items'] } | Select-Object -First 1
+    } catch {
+        Add-Log ("Falha ao varrer a unidade: {0}" -f $_.Exception.Message) 'error'
+    } finally {
+        if ($S.LibTimer) {
+            try { $S.LibTimer.Stop() } catch { }
+            $S.LibTimer = $null
+        }
+        try { $scan.PowerShell.Dispose() } catch { }
+        try { $scan.Runspace.Dispose() } catch { }
+        $S.LibScan = $null
+    }
+
+    if ($S.Drive -ne $scan.Letter) { return }   # trocou de unidade no meio
+
+    if (-not $report) {
+        $ui.LibraryInfo.Text = ''
+        Show-LibraryMessage 'NAO CONSEGUI LER A UNIDADE' '#FF5555'
+        return
+    }
+
+    $S.Lib = @($report.Items)
+    $S.LibReport = $report
+    Add-Log ("Biblioteca: {0} jogo(s) em {1}:" -f $report.Count, $scan.Letter) 'dim'
+    Render-Library
+}
+
+function Get-LibraryRows {
+    $rows = New-Object System.Collections.ArrayList
+
+    # Jogos já instalados no formato do OPL (ul.*)
+    foreach ($g in @($S.Games)) {
+        if ($g.Tipo -eq 'ul') {
+            [void]$rows.Add([pscustomobject]@{
+                Platform = 'PS2'; Label = 'PS2'; Name = $g.Nome
+                Rel = 'INSTALADO NO OPL (UL.*)'; Size = [double]0; SizeText = '—'
+                Instalado = $true; File = $null; Serial = $g.Serial
+            })
+        }
+    }
+
+    # Jogos soltos encontrados na unidade (inclui os do modo DVD)
+    $dvd = @($S.Games | Where-Object { $_.Tipo -eq 'dvd' } | ForEach-Object { $_.Path })
+    foreach ($it in @($S.Lib)) {
+        [void]$rows.Add([pscustomobject]@{
+            Platform = $it.Platform; Label = $it.PlatformLabel; Name = $it.Name
+            Rel = $it.Rel; Size = $it.Size; SizeText = (Format-Size $it.Size)
+            Instalado = ($dvd -contains $it.File); File = $it.File; Serial = $it.Serial
+        })
+    }
+
+    return @($rows | Sort-Object @{ e = { Get-GamePlatformRank $_.Platform } }, Name)
+}
+
+function Render-Library {
+    $ui.LibraryPanel.Children.Clear()
+
+    $rows = @(Get-LibraryRows)
+
+    if ($rows.Count -eq 0) {
+        $ui.LibraryInfo.Text = '0 JOGOS'
+        if (-not $S.Drive) {
+            Show-LibraryMessage 'SELECIONE UMA UNIDADE'
+        } else {
+            Show-LibraryMessage ("NENHUM JOGO ENCONTRADO EM {0}:`n`nFormatos reconhecidos: PS2 .iso · PS1 .bin/.cue/.chd`nSNES .sfc · N64 .n64 · GBA .gba · NDS .nds · GC .gcm" -f $S.Drive)
+        }
+        return
+    }
+
+    $platforms = @($rows | ForEach-Object { $_.Platform } | Select-Object -Unique).Count
+    if ($S.LibReport -and $S.LibReport.Truncated) {
+        $ui.LibraryInfo.Text = ('MOSTRANDO {0} (LIMITE)' -f $rows.Count)
+    } else {
+        $ui.LibraryInfo.Text = ('{0} JOGO(S) · {1} PLATAFORMA(S)' -f $rows.Count, $platforms)
+    }
+
+    foreach ($r in $rows) {
+        $border = New-Object Windows.Controls.Border
+        $border.BorderBrush = Br '#161616'
+        $border.BorderThickness = New-Object Windows.Thickness(0, 0, 0, 1)
+        $border.Padding = New-Object Windows.Thickness(0, 6, 0, 6)
+        $border.Tag = $r
+
+        if ($r.File) {
+            $border.ToolTip = ('{0} · {1}`n{2}`n{3}' -f $r.Label, $r.Name, $r.Rel, $r.File)
+        } else {
+            $border.ToolTip = ('{0} · {1}`n{2}' -f $r.Label, $r.Name, $r.Rel)
+        }
+
+        $grid = New-Object Windows.Controls.Grid
+
+        $c0 = New-Object Windows.Controls.ColumnDefinition
+        $c0.Width = New-Object Windows.GridLength(72)
+        [void]$grid.ColumnDefinitions.Add($c0)
+
+        $c1 = New-Object Windows.Controls.ColumnDefinition
+        $c1.Width = New-Object Windows.GridLength(1, 'Star')
+        [void]$grid.ColumnDefinitions.Add($c1)
+
+        $c2 = New-Object Windows.Controls.ColumnDefinition
+        $c2.Width = [Windows.GridLength]::Auto
+        [void]$grid.ColumnDefinitions.Add($c2)
+
+        $c3 = New-Object Windows.Controls.ColumnDefinition
+        $c3.Width = [Windows.GridLength]::Auto
+        [void]$grid.ColumnDefinitions.Add($c3)
+
+        # plataforma
+        $badge = New-Object Windows.Controls.Border
+        $badge.BorderBrush = Br (Get-PlatformColor $r.Platform)
+        $badge.BorderThickness = New-Object Windows.Thickness(1)
+        $badge.Padding = New-Object Windows.Thickness(4, 1, 4, 1)
+        $badge.HorizontalAlignment = 'Left'
+        $badge.VerticalAlignment = 'Center'
+        $bt = New-Object Windows.Controls.TextBlock
+        $bt.Text = $r.Label
+        $bt.Foreground = Br (Get-PlatformColor $r.Platform)
+        $bt.FontSize = 9
+        $bt.FontWeight = 'Bold'
+        $badge.Child = $bt
+        [Windows.Controls.Grid]::SetColumn($badge, 0)
+        [void]$grid.Children.Add($badge)
+
+        # nome + caminho
+        $stack = New-Object Windows.Controls.StackPanel
+        $stack.Margin = New-Object Windows.Thickness(6, 0, 6, 0)
+        $stack.VerticalAlignment = 'Center'
+
+        $nm = New-Object Windows.Controls.TextBlock
+        $nm.Text = $r.Name
+        $nm.Foreground = Br '#CCCCCC'
+        $nm.FontSize = 10
+        $nm.FontWeight = 'Bold'
+        $nm.TextTrimming = 'CharacterEllipsis'
+        [void]$stack.Children.Add($nm)
+
+        $rel = New-Object Windows.Controls.TextBlock
+        $rel.Text = $r.Rel
+        $rel.Foreground = Br '#555555'
+        $rel.FontSize = 9
+        $rel.TextTrimming = 'CharacterEllipsis'
+        [void]$stack.Children.Add($rel)
+
+        [Windows.Controls.Grid]::SetColumn($stack, 1)
+        [void]$grid.Children.Add($stack)
+
+        # tamanho
+        $sz = New-Object Windows.Controls.TextBlock
+        $sz.Text = $r.SizeText
+        $sz.Foreground = Br '#666666'
+        $sz.FontSize = 9
+        $sz.VerticalAlignment = 'Center'
+        $sz.HorizontalAlignment = 'Right'
+        $sz.Margin = New-Object Windows.Thickness(0, 0, 10, 0)
+        [Windows.Controls.Grid]::SetColumn($sz, 2)
+        [void]$grid.Children.Add($sz)
+
+        # ação
+        if ($r.Instalado) {
+            $act = New-Object Windows.Controls.TextBlock
+            $act.Text = 'OPL'
+            $act.Foreground = Br '#50FA7B'
+            $act.FontSize = 9
+            $act.FontWeight = 'Bold'
+            $act.VerticalAlignment = 'Center'
+        } elseif ($r.Platform -eq 'PS2' -and $r.File) {
+            $act = New-Object Windows.Controls.Button
+            $act.Style = $win.FindResource('BtnTiny')
+            $act.Content = '+'
+            $act.Tag = $r
+            $act.ToolTip = 'Adicionar à lista de instalação'
+            $act.Add_Click({ param($sender, $e) Add-LibraryGame $sender.Tag })
+        } else {
+            $act = New-Object Windows.Controls.TextBlock
+            $act.Text = '—'
+            $act.Foreground = Br '#333333'
+            $act.FontSize = 9
+            $act.VerticalAlignment = 'Center'
+        }
+        [Windows.Controls.Grid]::SetColumn($act, 3)
+        [void]$grid.Children.Add($act)
+
+        $border.Child = $grid
+        $border.Add_MouseEnter({ param($sender, $e) $sender.Background = Br '#0D0D0D' })
+        $border.Add_MouseLeave({ param($sender, $e) $sender.Background = Br '#000000' })
+        [void]$ui.LibraryPanel.Children.Add($border)
+    }
+}
+
+function Add-LibraryGame {
+    param($Item)
+
+    if (-not $Item) { return }
+
+    if ($Item.Platform -ne 'PS2') {
+        Show-Toast 'Plataforma não suportada' ("{0}: o OPL executa apenas jogos de PS2." -f $Item.Label) 'warn'
+        return
+    }
+    if ($Item.Instalado) {
+        Show-Toast 'Já está no pendrive' $Item.Name 'warn'
+        return
+    }
+    if (-not $Item.File) { return }
+
+    $before = $S.Files.Count
+    Add-IsoFile $Item.File
+    if ($S.Files.Count -gt $before) {
+        Show-Toast 'Adicionado à instalação' $Item.Name 'ok'
+        Set-Status 'PRONTO PARA INSTALAR' '#8BE9FD'
+    }
+}
+
+function Refresh-Library {
+    if ($env:EASYROMS_SNAPSHOT) { return }
+
+    if (-not $S.Drive) {
+        Stop-LibraryScan
+        $S.LibLetter = $null
+        $S.Lib = @()
+        $S.LibReport = $null
+        $ui.LibraryInfo.Text = ''
+        Show-LibraryMessage 'SELECIONE UMA UNIDADE'
+        return
+    }
+
+    if ($S.Busy) { return }
+    Start-LibraryScan
+}
+
+function Initialize-GamesTabs {
+    $ui.TabOpl.Add_Click({
+        param($sender, $e)
+        Set-GamesView 'opl'
+    })
+    $ui.TabLibrary.Add_Click({
+        param($sender, $e)
+        Set-GamesView 'library'
+        if ($S.LibLetter -ne $S.Drive) { Refresh-Library }
+    })
+    Set-GamesView 'opl'
+}
+
 # ---------------------------------------------------------------- motor assíncrono
 
 . (Join-Path $PSScriptRoot 'Worker.ps1')
@@ -806,6 +1189,7 @@ function Update-Worker {
 
         Load-Games
         Update-DriveChips
+        Refresh-Library
 
         # Load-Games recalcula o uso do disco; restaura o resultado da operação.
         if ($sync.Cancel) {
@@ -1016,6 +1400,7 @@ $ui.BtnRefresh.Add_MouseLeftButtonUp({
     Update-DriveChips
     Load-Games
     Add-Log 'Lista recarregada.' 'dim'
+    Refresh-Library
 })
 
 $ui.BtnClearFiles.Add_MouseLeftButtonUp({
@@ -1122,9 +1507,12 @@ if ($Drive) {
     $S.Drive = $Drive.TrimEnd(':', '\').ToUpper()
 }
 
+Initialize-GamesTabs
+
 Update-DriveChips
 Load-Games
 Render-Files
+Refresh-Library
 
 foreach ($p in @($Iso)) {
     if ($p) { Add-IsoFile $p }
@@ -1147,12 +1535,35 @@ if (-not $env:EASYROMS_SNAPSHOT) {
     $S.DriveTimer.Start()
     $win.Add_Closed({
         if ($S.DriveTimer) { $S.DriveTimer.Stop(); $S.DriveTimer = $null }
+        Stop-LibraryScan
     })
 }
 
 # Modo de captura: usado para gerar o screenshot da documentação.
 if ($env:EASYROMS_SNAPSHOT) {
     $win.Show()
+    $win.UpdateLayout()
+
+    # Deixa o dispatcher rodar um pouco (a varredura da biblioteca usa timer).
+    function Wait-Snapshot {
+        param([int]$Ms = 250)
+        $frame = New-Object Windows.Threading.DispatcherFrame
+        $t = New-Object Windows.Threading.DispatcherTimer
+        $t.Interval = [TimeSpan]::FromMilliseconds($Ms)
+        $t.Add_Tick({ $t.Stop(); $frame.Continue = $false })
+        $t.Start()
+        [Windows.Threading.Dispatcher]::PushFrame($frame)
+    }
+
+    if ($env:EASYROMS_SNAPSHOT_VIEW -eq 'library' -and $S.Drive) {
+        Set-GamesView 'library'
+        Start-LibraryScan
+        $deadline = (Get-Date).AddSeconds(20)
+        Wait-Snapshot 300
+        while ((Get-Date) -lt $deadline -and $ui.LibraryInfo.Text -match 'VARRENDO') { Wait-Snapshot 250 }
+        Wait-Snapshot 400
+    }
+
     $win.UpdateLayout()
     [Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke(
         [Windows.Threading.DispatcherPriority]::Render, [action] { })

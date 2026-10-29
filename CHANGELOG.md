@@ -4,6 +4,32 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.4.0] — 2026-10-28
+
+### Adicionado
+
+- **Biblioteca de jogos por plataforma.** Clique na unidade: a aba **BIBLIOTECA**
+  abre com todos os jogos encontrados, com etiqueta de plataforma, nome, pasta e
+  tamanho.
+  - **PS2** `.iso` (confirma o `SYSTEM.CNF` de verdade), **PS1** `.bin/.cue/.chd/.pbp/.img`,
+    **SNES** `.sfc/.smc`, **N64** `.n64/.z64/.v64`, **GBA**, **GB/GBC**, **NDS**,
+    **GC/Wii** `.gcm/.rvz/.wbfs`, **Mega Drive**, **Master System**, **NES**,
+    **PSP** `.cso` e **Dreamcast** `.gdi/.cdi`.
+  - `.cue` + `.bin` do mesmo jogo aparecem uma vez só (fica o `.cue`, que é a
+    "capa" da imagem).
+  - A varredura roda em segundo plano (não trava a janela), desce até 4 pastas,
+    ignora lixo (`$RECYCLE.BIN`, `System Volume Information`) e as pastas do
+    próprio OPL (`ART`, `CFG`, `CHT`, `LNG`, `THM`, `VMC`), e para em 800 jogos.
+  - Jogos já instalados em `ul.*` e ISOs da pasta `DVD` aparecem marcados `OPL`.
+  - O botão **+** em um ISO de PS2 coloca o jogo direto na lista de instalação.
+  - PS1 e Nintendo aparecem só para consulta: **o OPL executa apenas PS2**.
+- A biblioteca é refeita sozinha quando o pendrive entra/sai (hot-plug) e depois
+  de instalar ou remover um jogo.
+- Teste de UI novo: cria um ISO de PS2 sintético (ISO9660 + `SYSTEM.CNF`), monta
+  pastas de PS1/SNES/N64/GBA/NDS/GC na unidade virtual e confere a lista inteira
+  (125 asserções no total). Os screenshots da documentação foram refeitos com a
+  aba nova.
+
 ## [1.3.1] — 2026-10-28
 
 ### Corrigido
@@ -148,6 +174,7 @@ um PS2 com FreeMcBoot/OPL — ver [docs/CASE-STUDY.md](docs/CASE-STUDY.md).
   Medalha de Honra, ULTIMO BOMBA, God of War e Crash Twinsanity).
 - God of War (DVD9, 7,94 GB) instalado em 8 pedaços; soma conferida byte a byte.
 
+[1.4.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/lucao019/easyromstooplps2/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/lucao019/easyromstooplps2/compare/v1.2.0...v1.2.1

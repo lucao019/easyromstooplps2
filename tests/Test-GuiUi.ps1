@@ -203,6 +203,7 @@ try {
         Assert-True ($chip.IsChecked -or ($S.Drive -eq $tag)) "chip $tag ficou marcado"
     }
     Assert-True ($tested -ge 2) "cliquei em $tested unidades"
+    Assert-Equal 'library' $S.LibView 'clique na unidade abre a biblioteca'
 
     # ============================================================ 3. modos
     Write-Host ''
@@ -424,11 +425,17 @@ try {
     }
 
     Click $ui.BtnMax 'BtnMax'
+    $deadline = (Get-Date).AddSeconds(3)
+    while ($win.WindowState -ne 'Maximized' -and (Get-Date) -lt $deadline) { Pump 100 }
     Assert-Equal 'Maximized' $win.WindowState 'maximizar'
     Click $ui.BtnMax 'BtnMax'
+    $deadline = (Get-Date).AddSeconds(3)
+    while ($win.WindowState -ne 'Normal' -and (Get-Date) -lt $deadline) { Pump 100 }
     Assert-Equal 'Normal' $win.WindowState 'restaurar'
 
     Click $ui.BtnMin 'BtnMin'
+    $deadline = (Get-Date).AddSeconds(3)
+    while ($win.WindowState -ne 'Minimized' -and (Get-Date) -lt $deadline) { Pump 100 }
     Assert-Equal 'Minimized' $win.WindowState 'minimizar'
     $win.WindowState = 'Normal'
     Pump 100
@@ -459,9 +466,125 @@ try {
     Assert-True ($ui.Toasts.Children.Count -gt 0) 'avisou que o pendrive saiu'
     Remove-Item $plugDir -Recurse -Force -ErrorAction SilentlyContinue
 
-    # ============================================================ 13. nenhum erro de handler
+        # ============================================================ 13. biblioteca
     Write-Host ''
-    Write-Host '13. Nenhum handler lançou exceção' -ForegroundColor Cyan
+    Write-Host '13. Biblioteca: jogos de todas as plataformas na unidade' -ForegroundColor Cyan
+
+    function New-TestPs2Iso {
+        # ISO9660 mínimo com SYSTEM.CNF: serve para testar a leitura de verdade.
+        param([string]$Path, [string]$Serial = 'SLUS_215.97')
+
+        $total = 19
+        $bytes = New-Object byte[] ($total * 2048)
+
+        $pvd = 16 * 2048
+        $bytes[$pvd] = 1
+        [Text.Encoding]::ASCII.GetBytes('CD001').CopyTo($bytes, $pvd + 1)
+        $bytes[$pvd + 6] = 1
+        [Text.Encoding]::ASCII.GetBytes('PLAYSTATION').CopyTo($bytes, $pvd + 8)
+        [BitConverter]::GetBytes([uint32]$total).CopyTo($bytes, $pvd + 80)
+        [BitConverter]::GetBytes([uint32]2048).CopyTo($bytes, $pvd + 128)
+
+        $rec = 156
+        $bytes[$pvd + $rec] = 34
+        [BitConverter]::GetBytes([uint32]17).CopyTo($bytes, $pvd + $rec + 2)
+        [BitConverter]::GetBytes([uint32]2048).CopyTo($bytes, $pvd + $rec + 10)
+        $bytes[$pvd + $rec + 25] = 2
+        $bytes[$pvd + $rec + 28] = 1
+        $bytes[$pvd + $rec + 31] = 1
+
+        $dir = 17 * 2048
+        $off = 0
+        foreach ($n in @(@{ N = '.'; F = 2; E = 17; S = 2048 }, @{ N = '..'; F = 2; E = 17; S = 2048 }, @{ N = 'SYSTEM.CNF;1'; F = 0; E = 18; S = 64 })) {
+            $nb = [Text.Encoding]::ASCII.GetBytes($n.N)
+            $len = 33 + $nb.Length
+            if ($len % 2) { $len++ }
+            $bytes[$dir + $off] = [byte]$len
+            [BitConverter]::GetBytes([uint32]$n.E).CopyTo($bytes, $dir + $off + 2)
+            [BitConverter]::GetBytes([uint32]$n.S).CopyTo($bytes, $dir + $off + 10)
+            $bytes[$dir + $off + 25] = [byte]$n.F
+            $bytes[$dir + $off + 28] = 1
+            $bytes[$dir + $off + 32] = [byte]$nb.Length
+            $nb.CopyTo($bytes, $dir + $off + 33)
+            $off += $len
+        }
+
+        $cnf = [Text.Encoding]::ASCII.GetBytes("BOOT2 = cdrom0:\$Serial;1`r`nVER = 1.00`r`nVMODE = NTSC`r`n")
+        $cnf.CopyTo($bytes, 18 * 2048)
+        [IO.File]::WriteAllBytes($Path, $bytes)
+    }
+
+    $roms = "${letter}:\ROMs"
+    foreach ($d in 'PS2', 'PS1', 'SNES', 'N64', 'GBA', 'NDS', 'GC') {
+        New-Item -ItemType Directory -Force (Join-Path $roms $d) | Out-Null
+    }
+
+    $ps2Iso = Join-Path $roms 'PS2\Jogo Teste (SLUS_215.97).iso'
+    New-TestPs2Iso -Path $ps2Iso
+    [IO.File]::WriteAllBytes((Join-Path $roms 'PS1\Crash (SLUS_005.94).bin'), (New-Object byte[] 8192))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'PS1\Crash (SLUS_005.94).cue'), [Text.Encoding]::ASCII.GetBytes('FILE "Crash (SLUS_005.94).bin" BINARY'))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'SNES\Super Mario World.sfc'), (New-Object byte[] 8192))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'N64\Zelda.z64'), (New-Object byte[] 8192))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'GBA\Pokemon.gba'), (New-Object byte[] 8192))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'NDS\Kirby.nds'), (New-Object byte[] 8192))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'GC\Sunshine.gcm'), (New-Object byte[] 8192))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'lixo.txt'), (New-Object byte[] 8192))
+
+    # A seção 12 removeu a unidade do teste de hot-plug e o app escolheu outra:
+    # volta para a unidade virtual antes de conferir a biblioteca.
+    $chip = $ui.DrivesPanel.Children | Where-Object {
+        $_ -is [Windows.Controls.Primitives.ToggleButton] -and [string]$_.Tag -eq $letter
+    } | Select-Object -First 1
+    Assert-True ($null -ne $chip) "unidade ${letter}: de volta na lista"
+    Click $chip "chip-$letter (biblioteca)"
+    Assert-Equal $letter $S.Drive "unidade ${letter}: selecionada para a biblioteca"
+
+    Click $ui.TabLibrary 'TabLibrary'
+    Pump 250
+    Assert-Equal 'Visible' ([string]$ui.LibraryView.Visibility) 'aba BIBLIOTECA aparece'
+    Assert-Equal 'Collapsed' ([string]$ui.OplView.Visibility) 'aba OPL fica escondida'
+
+    Click $ui.BtnRefresh 'BtnRefresh (varredura)'
+    $deadline = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $deadline -and $ui.LibraryInfo.Text -match 'VARRENDO') { Pump 200 }
+    Assert-True ($ui.LibraryInfo.Text -notmatch 'VARRENDO') 'varredura terminou'
+
+    $lib = @($S.Lib)
+    $plats = @($lib | ForEach-Object { $_.Platform } | Select-Object -Unique)
+    foreach ($plat in 'PS2', 'PS1', 'SNES', 'N64', 'GBA', 'NDS', 'GC') {
+        Assert-True ($plats -contains $plat) "biblioteca encontrou $plat"
+    }
+
+    $ps2 = $lib | Where-Object { $_.Platform -eq 'PS2' -and $_.Ext -eq '.iso' } | Select-Object -First 1
+    Assert-True ($null -ne $ps2) 'biblioteca encontrou o ISO de PS2'
+    Assert-Equal 'SLUS_215.97' $ps2.Serial 'serial lido de dentro do ISO'
+    Assert-True ($S.LibReport.IsoChecked -ge 1) 'o ISO de PS2 foi aberto e lido (não só o nome)'
+    Assert-True (-not ($lib | Where-Object { $_.Ext -eq '.bin' })) '.bin escondido (fica só o .cue)'
+    Assert-True ([bool]($lib | Where-Object { $_.Ext -eq '.cue' })) '.cue aparece na lista'
+    Assert-True ($ui.LibraryPanel.Children.Count -ge 7) 'linhas desenhadas na biblioteca'
+
+    $row = $ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.File -eq $ps2Iso } | Select-Object -First 1
+    Assert-True ($null -ne $row) 'linha do ISO de PS2 na tela'
+    $plus = $row.Child.Children | Where-Object { $_ -is [Windows.Controls.Button] } | Select-Object -First 1
+    Assert-True ($null -ne $plus) 'botão + na linha do PS2'
+
+    $before = $S.Files.Count
+    Click $plus 'botão + do PS2'
+    Assert-Equal ($before + 1) $S.Files.Count 'jogo entrou na lista de instalação'
+    Assert-Equal $ps2Iso $S.Files[$S.Files.Count - 1].Path 'é o ISO certo'
+    $S.Files.Clear()
+    Render-Files
+
+    $snesRow = $ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.Platform -eq 'SNES' } | Select-Object -First 1
+    $snesButtons = if ($snesRow) { @($snesRow.Child.Children | Where-Object { $_ -is [Windows.Controls.Button] }).Count } else { -1 }
+    Assert-Equal 0 $snesButtons 'SNES não tem botão de instalar'
+
+    Click $ui.TabOpl 'TabOpl'
+    Pump 200
+    Assert-Equal 'Visible' ([string]$ui.OplView.Visibility) 'voltou para a aba OPL'
+# ============================================================ 14. nenhum erro de handler
+    Write-Host ''
+    Write-Host '14. Nenhum handler lançou exceção' -ForegroundColor Cyan
 
     if ($script:UiErrors.Count -gt 0) {
         foreach ($ex in $script:UiErrors) {
@@ -472,9 +595,9 @@ try {
     Assert-Equal 0 $script:UiErrors.Count 'exceções em handlers'
     Assert-True (-not ((Get-LogText) -match 'ERRO inesperado')) 'log sem erro inesperado'
 
-    # ============================================================ 13. cobertura
+    # ============================================================ 15. cobertura
     Write-Host ''
-    Write-Host '14. Cobertura dos controles' -ForegroundColor Cyan
+    Write-Host '15. Cobertura dos controles' -ForegroundColor Cyan
 
     $all = New-Object System.Collections.ArrayList
     function Walk {
