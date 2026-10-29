@@ -79,21 +79,46 @@ function Get-ShortcutPaths {
     return $paths
 }
 
+function Test-ShortcutPointsToTarget {
+    <#
+        Um atalho só deve ser apagado se apontar para a instalação que está
+        sendo removida. Sem isso, desinstalar uma cópia de teste apagava o
+        atalho (e o Menu Iniciar) da cópia real instalada em outro lugar.
+    #>
+    param([string]$Path, [string]$Root)
+
+    if (-not $Root) { return $true }
+    try {
+        $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($Path)
+        $probe = (@($lnk.TargetPath, $lnk.Arguments, $lnk.WorkingDirectory) | Where-Object { $_ }) -join ' '
+        return $probe.IndexOf($Root.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -ge 0
+    } catch {
+        return $false
+    }
+}
+
 # ---------------------------------------------------------------- desinstalar
 
 if ($Uninstall) {
     Set-Location $env:TEMP
 
     foreach ($lnk in (Get-ShortcutPaths)) {
-        if (Test-Path -LiteralPath $lnk) {
+        if (-not (Test-Path -LiteralPath $lnk)) { continue }
+
+        if (Test-ShortcutPointsToTarget -Path $lnk -Root $Target) {
             Remove-Item -LiteralPath $lnk -Force -ErrorAction SilentlyContinue
             Say "atalho removido: $lnk" 'DarkGray'
+        } else {
+            Say "atalho de outra instalação mantido: $lnk" 'DarkGray'
         }
     }
 
     $startFolder = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$AppName"
     if (Test-Path -LiteralPath $startFolder) {
-        Remove-Item -LiteralPath $startFolder -Recurse -Force -ErrorAction SilentlyContinue
+        # Só apaga a pasta se ela ficou vazia (não mexe em atalhos de outra cópia).
+        if (@(Get-ChildItem -LiteralPath $startFolder -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+            Remove-Item -LiteralPath $startFolder -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     if (Test-Path -LiteralPath $Target) {

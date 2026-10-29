@@ -4,6 +4,15 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.3.1] — 2026-10-28
+
+### Corrigido
+
+- **Desinstalar não apaga mais atalhos de outra instalação.** Antes, rodar
+  `-Uninstall` apontando para outra pasta removia o atalho do Desktop e a pasta do
+  Menu Iniciar da cópia real (o atalho só é apagado se apontar para a instalação
+  que está sendo removida). A pasta do Menu Iniciar só é apagada se ficar vazia.
+
 ## [1.3.0] — 2026-10-28
 
 ### Adicionado
@@ -139,6 +148,7 @@ um PS2 com FreeMcBoot/OPL — ver [docs/CASE-STUDY.md](docs/CASE-STUDY.md).
   Medalha de Honra, ULTIMO BOMBA, God of War e Crash Twinsanity).
 - God of War (DVD9, 7,94 GB) instalado em 8 pedaços; soma conferida byte a byte.
 
+[1.3.1]: https://github.com/lucao019/easyromstooplps2/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/lucao019/easyromstooplps2/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.1.0...v1.2.0
