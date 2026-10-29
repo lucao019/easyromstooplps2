@@ -4,6 +4,48 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.8.0] — 2026-10-29
+
+### Adicionado
+
+- **A biblioteca só lista jogo de verdade.** Extensão certa não bastava: um
+  `README.md` de 3 KB virava "Mega Drive" e um vídeo renomeado para `.iso` virava
+  "PS2". Agora cada arquivo passa por três conferências antes de entrar na lista:
+  - **tamanho mínimo** por formato (um save de 2 KB não é imagem de PS1);
+  - **conteúdo** — arquivo que é só texto (`.md`, `.txt`, `.nfo` renomeado) é
+    descartado; `.md`/`.gen` só entram com a assinatura **`SEGA`** do Mega Drive;
+  - **disco completo** — `.bin`/`.img`/`.mdf` só entram com o `.cue`/`.ccd`/`.mds`
+    ao lado; `.iso` que não abre como ISO9660 é descartado.
+  Dentro de ZIP/RAR/7Z, `README`, `LICENSE`, `CHANGELOG` e afins também são
+  ignorados. E um disco de PS1 com 30 faixas mostra **uma linha** (o `.cue`), não 30.
+- **Aviso de jogo que já está em outra unidade.** Se o jogo existe na unidade
+  aberta e também está instalado no pendrive, a linha ganha o status amarelo
+  **`JÁ NO PENDRIVE F:`** e uma faixa no topo: *"5 JOGO(S) DESTA UNIDADE JÁ ESTÃO
+  NO PENDRIVE F: — NÃO PRECISA INSTALAR DE NOVO"*. O clique não enfileira nada.
+  O filtro **NO PENDRIVE** mostra só esses casos. A varredura lê o `ul.cfg` e a
+  pasta `DVD\` das outras unidades e compara o **serial** de verdade — não o nome
+  do arquivo.
+- **Glossário na própria janela.** O botão **`?`** abre uma explicação de tudo o
+  que aparece na tela: `ISO`, `ul.*`, `ul.cfg`, `DVD\`, ZIP/RAR/7Z, CUE+BIN,
+  **MODO**, PARTES, CRC, SERIAL, cada status (INSTALADO, JÁ NO OPL, JÁ NO
+  PENDRIVE, INSTALAR, OUTROS), o que o app ignora e o que é o OPL. Fecha com
+  **FECHAR** ou **ESC**. A aba OPL ganhou uma legenda fixa embaixo do cabeçalho e
+  cada coluna tem tooltip.
+- **Sons da interface.** Passar o mouse numa opção toca um tique curto; clicar,
+  conectar/remover o pendrive, concluir e falhar têm sons próprios. São **sete WAVs
+  sintetizados pelo projeto** (`tools/New-Sounds.ps1`) — nenhum áudio da Sony ou de
+  terceiros. O chip **SOM: ON / OFF** no topo liga e desliga, e a escolha fica salva
+  em `%LOCALAPPDATA%\EasyRomsToOPL\settings.json`. `EASYROMS_MUTE=1` silencia (usado
+  pelos testes).
+
+### Alterado
+
+- A varredura da biblioteca agora também devolve o mapa de jogos instalados nas
+  outras unidades, no mesmo runspace — sem travar a janela nem varrer dois discos
+  na thread da interface.
+- Testes: **231 asserções de UI** (filtro de lixo, aviso de outra unidade,
+  glossário, som, cinco filtros) e **268 no total**.
+
 ## [1.7.0] — 2026-10-29
 
 ### Adicionado

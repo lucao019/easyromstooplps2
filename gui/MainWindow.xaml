@@ -308,6 +308,13 @@
                    HorizontalAlignment="Center"/>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal">
+          <ToggleButton x:Name="BtnSound" Style="{StaticResource Chip}" Content="SOM: ON" IsChecked="True"
+                        Padding="8,3" FontSize="9" Margin="0,0,8,0" VerticalAlignment="Center"
+                        ToolTip="Liga/desliga os sons da interface (ficam salvos para a próxima vez)"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+          <Button x:Name="BtnHelp" Style="{StaticResource BtnWin}" Content="?"
+                  ToolTip="Glossário: formatos, colunas, status e plataformas"
+                  shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
           <Button x:Name="BtnMin" Style="{StaticResource BtnWin}" Content="—"
                   shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
           <Button x:Name="BtnMax" Style="{StaticResource BtnWin}" Content="□"
@@ -438,10 +445,11 @@
             <Grid x:Name="OplView" Grid.Row="2">
               <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
               </Grid.RowDefinitions>
 
-              <Grid Grid.Row="0" Margin="10,6,10,6">
+              <Grid Grid.Row="0" Margin="10,6,10,2">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="2.4*"/>
                   <ColumnDefinition Width="1.5*"/>
@@ -450,14 +458,22 @@
                   <ColumnDefinition Width="1.1*"/>
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="NOME" Style="{StaticResource Section}" Margin="0"/>
-                <TextBlock Grid.Column="1" Text="SERIAL" Style="{StaticResource Section}" Margin="0"/>
-                <TextBlock Grid.Column="2" Text="MODO" Style="{StaticResource Section}" Margin="0"/>
-                <TextBlock Grid.Column="3" Text="PARTES" Style="{StaticResource Section}" Margin="0"/>
-                <TextBlock Grid.Column="4" Text="CRC" Style="{StaticResource Section}" Margin="0"/>
+                <TextBlock Grid.Column="0" Text="NOME" Style="{StaticResource Section}" Margin="0"
+                           ToolTip="Nome que aparece no menu do OPL (máx. 32 caracteres)"/>
+                <TextBlock Grid.Column="1" Text="SERIAL" Style="{StaticResource Section}" Margin="0"
+                           ToolTip="Código do jogo (ex.: SLUS_215.97), lido do SYSTEM.CNF dentro do ISO"/>
+                <TextBlock Grid.Column="2" Text="MODO" Style="{StaticResource Section}" Margin="0"
+                           ToolTip="Mídia original do jogo: DVD (jogo em DVD) ou CD (jogo em CD). ISO = arquivo inteiro em DVD\"/>
+                <TextBlock Grid.Column="3" Text="PARTES" Style="{StaticResource Section}" Margin="0"
+                           ToolTip="Quantos pedaços de 1 GiB o jogo ocupa em ul.*"/>
+                <TextBlock Grid.Column="4" Text="CRC" Style="{StaticResource Section}" Margin="0"
+                           ToolTip="Assinatura do nome calculada pelo OPL. Se não bater, o jogo aparece e não abre."/>
               </Grid>
 
-              <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
+              <TextBlock Grid.Row="1" Margin="10,0,10,4" FontSize="9" Foreground="#555555" TextWrapping="Wrap"
+                         Text="UL.* = ISO DIVIDIDO EM PEDAÇOS DE 1 GiB · DVD\ = ISO INTEIRO LIDO DIRETO · MODO = MÍDIA ORIGINAL (DVD/CD) · ? = GLOSSÁRIO"/>
+
+              <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
                 <StackPanel x:Name="GamesPanel"/>
               </ScrollViewer>
             </Grid>
@@ -465,6 +481,7 @@
             <!-- visão BIBLIOTECA (todas as plataformas) -->
             <Grid x:Name="LibraryView" Grid.Row="2" Visibility="Collapsed">
               <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -478,19 +495,25 @@
                   <ColumnDefinition Width="Auto"/>
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="PLATAFORMA" Style="{StaticResource Section}" Margin="0"/>
-                <TextBlock Grid.Column="1" Text="JOGO" Style="{StaticResource Section}" Margin="0"/>
+                <TextBlock Grid.Column="0" Text="PLATAFORMA" Style="{StaticResource Section}" Margin="0"
+                           ToolTip="PS2 roda no OPL; PS1 e Nintendo aparecem só para consulta"/>
+                <TextBlock Grid.Column="1" Text="JOGO" Style="{StaticResource Section}" Margin="0"
+                           ToolTip="Nome do jogo e onde ele está na unidade"/>
                 <TextBlock Grid.Column="2" Text="TAMANHO" Style="{StaticResource Section}" Margin="0,0,10,0"/>
-                <TextBlock Grid.Column="3" Text="STATUS" Style="{StaticResource Section}" Margin="0"/>
+                <TextBlock Grid.Column="3" Text="STATUS" Style="{StaticResource Section}" Margin="0"
+                           ToolTip="INSTALADO = já está nesta unidade · JÁ NO OPL = cópia de jogo que já está em ul.* · JÁ NO PENDRIVE = já está em outra unidade · INSTALAR = ainda não está"/>
               </Grid>
 
               <!-- filtros: o que já está no pendrive x o que ainda pode ser instalado -->
               <WrapPanel x:Name="LibFilters" Grid.Row="1" Orientation="Horizontal" Margin="10,0,10,4"/>
 
-              <TextBlock Grid.Row="2" Margin="10,0,10,6" FontSize="9" Foreground="#555555" TextWrapping="Wrap"
-                         Text="INSTALADO = JÁ APARECE NO MENU DO OPL · + INSTALAR = AINDA NÃO ESTÁ · OUTROS = SÓ CONSULTA"/>
+              <TextBlock Grid.Row="2" Margin="10,0,10,4" FontSize="9" Foreground="#555555" TextWrapping="Wrap"
+                         Text="INSTALADO = JÁ APARECE NO MENU DO OPL · JÁ NO PENDRIVE = NÃO PRECISA INSTALAR DE NOVO · OUTROS = SÓ CONSULTA · ? = GLOSSÁRIO"/>
 
-              <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
+              <TextBlock x:Name="LibWarn" Grid.Row="3" Margin="10,0,10,4" FontSize="9" FontWeight="Bold"
+                         Foreground="{StaticResource Yellow}" TextWrapping="Wrap" Visibility="Collapsed"/>
+
+              <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto" Padding="10,0,10,10">
                 <StackPanel x:Name="LibraryPanel"/>
               </ScrollViewer>
             </Grid>
@@ -563,6 +586,38 @@
             </StackPanel>
           </Border>
         </StackPanel>
+      </Border>
+    </Grid>
+
+    <!-- ============================ GLOSSÁRIO / AJUDA ============================ -->
+    <Grid x:Name="HelpOverlay" Grid.RowSpan="3" Background="#E6000000" Visibility="Collapsed">
+      <Border Style="{StaticResource Panel}" Width="760" MaxHeight="660"
+              VerticalAlignment="Center" HorizontalAlignment="Center">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+
+          <Border Grid.Row="0" Style="{StaticResource PanelHeader}">
+            <Grid>
+              <TextBlock Text="GLOSSÁRIO — COMO LER A TELA" Foreground="{StaticResource Cyan}"
+                         FontSize="10" FontWeight="Bold"/>
+              <TextBlock Text="ESC FECHA" Style="{StaticResource Dim}" HorizontalAlignment="Right"/>
+            </Grid>
+          </Border>
+
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="18,14,18,6">
+            <StackPanel x:Name="HelpPanel"/>
+          </ScrollViewer>
+
+          <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="12">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button x:Name="BtnHelpClose" Style="{StaticResource BtnPrimary}" Content="FECHAR"/>
+            </StackPanel>
+          </Border>
+        </Grid>
       </Border>
     </Grid>
 

@@ -50,6 +50,7 @@ Add-Type -AssemblyName System.Windows.Forms
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $repoRoot 'lib\UlFormat.ps1')
+. (Join-Path $PSScriptRoot 'TestIso.ps1')
 
 # ---------------------------------------------------------------- ISO de teste
 
@@ -119,6 +120,8 @@ $code = $code.Replace('[void]$win.ShowDialog()', '')
 $code = $code.Replace('$PSScriptRoot', "'" + (Join-Path $repoRoot 'gui') + "'")
 
 $env:EASYROMS_SNAPSHOT = ''
+$env:EASYROMS_MUTE = '1'                      # testes não tocam som
+$env:EASYROMS_SETTINGS = Join-Path $work 'settings.json'   # não mexe na config real
 
 try {
     Invoke-Expression $code
@@ -422,7 +425,13 @@ try {
     Write-Host ''
     Write-Host '10. Botão ISO (exportar)' -ForegroundColor Cyan
 
-    Add-DroppedFiles -Files @($isoFile.FullName)
+    # Exportar um ISO pequeno: o teste do ul.* de 2 pedaços já foi feito na
+    # seção 7. Assim o teste não precisa de 2 GB livres no disco do sistema.
+    $expIso = Join-Path $work 'Jogo Export (SLUS_215.97).iso'
+    New-TestPs2Iso -Path $expIso -Serial 'SLUS_215.97'
+    $expInfo = Get-IsoInfo $expIso
+
+    Add-DroppedFiles -Files @($expIso)
     $ui.NameBox.Text = 'Jogo de Teste'
     Click $ui.BtnInstall 'BtnInstall'
     Wait-Idle
@@ -440,8 +449,8 @@ try {
     Wait-Idle
     Pump 300
     Assert-True (Test-Path -LiteralPath $dest) 'iso remontado existe'
-    Assert-Equal $isoFile.Length (Get-Item -LiteralPath $dest).Length 'iso remontado tem o mesmo tamanho'
-    Assert-Equal $isoInfo.Serial (Get-IsoInfo $dest).Serial 'serial do iso remontado'
+    Assert-Equal (Get-Item -LiteralPath $expIso).Length (Get-Item -LiteralPath $dest).Length 'iso remontado tem o mesmo tamanho'
+    Assert-Equal $expInfo.Serial (Get-IsoInfo $dest).Serial 'serial do iso remontado'
 
     # sobrescrever pede confirmação
     Start-ExportTo -Game $isoBtn.Tag -Dest $dest
@@ -508,53 +517,9 @@ try {
     Assert-True ($ui.Toasts.Children.Count -gt 0) 'avisou que o pendrive saiu'
     Remove-Item $plugDir -Recurse -Force -ErrorAction SilentlyContinue
 
-        # ============================================================ 13. biblioteca
+    # ============================================================ 13. biblioteca
     Write-Host ''
     Write-Host '13. Biblioteca: jogos de todas as plataformas na unidade' -ForegroundColor Cyan
-
-    function New-TestPs2Iso {
-        # ISO9660 mínimo com SYSTEM.CNF: serve para testar a leitura de verdade.
-        param([string]$Path, [string]$Serial = 'SLUS_215.97')
-
-        $total = 19
-        $bytes = New-Object byte[] ($total * 2048)
-
-        $pvd = 16 * 2048
-        $bytes[$pvd] = 1
-        [Text.Encoding]::ASCII.GetBytes('CD001').CopyTo($bytes, $pvd + 1)
-        $bytes[$pvd + 6] = 1
-        [Text.Encoding]::ASCII.GetBytes('PLAYSTATION').CopyTo($bytes, $pvd + 8)
-        [BitConverter]::GetBytes([uint32]$total).CopyTo($bytes, $pvd + 80)
-        [BitConverter]::GetBytes([uint32]2048).CopyTo($bytes, $pvd + 128)
-
-        $rec = 156
-        $bytes[$pvd + $rec] = 34
-        [BitConverter]::GetBytes([uint32]17).CopyTo($bytes, $pvd + $rec + 2)
-        [BitConverter]::GetBytes([uint32]2048).CopyTo($bytes, $pvd + $rec + 10)
-        $bytes[$pvd + $rec + 25] = 2
-        $bytes[$pvd + $rec + 28] = 1
-        $bytes[$pvd + $rec + 31] = 1
-
-        $dir = 17 * 2048
-        $off = 0
-        foreach ($n in @(@{ N = '.'; F = 2; E = 17; S = 2048 }, @{ N = '..'; F = 2; E = 17; S = 2048 }, @{ N = 'SYSTEM.CNF;1'; F = 0; E = 18; S = 64 })) {
-            $nb = [Text.Encoding]::ASCII.GetBytes($n.N)
-            $len = 33 + $nb.Length
-            if ($len % 2) { $len++ }
-            $bytes[$dir + $off] = [byte]$len
-            [BitConverter]::GetBytes([uint32]$n.E).CopyTo($bytes, $dir + $off + 2)
-            [BitConverter]::GetBytes([uint32]$n.S).CopyTo($bytes, $dir + $off + 10)
-            $bytes[$dir + $off + 25] = [byte]$n.F
-            $bytes[$dir + $off + 28] = 1
-            $bytes[$dir + $off + 32] = [byte]$nb.Length
-            $nb.CopyTo($bytes, $dir + $off + 33)
-            $off += $len
-        }
-
-        $cnf = [Text.Encoding]::ASCII.GetBytes("BOOT2 = cdrom0:\$Serial;1`r`nVER = 1.00`r`nVMODE = NTSC`r`n")
-        $cnf.CopyTo($bytes, 18 * 2048)
-        [IO.File]::WriteAllBytes($Path, $bytes)
-    }
 
     $roms = "${letter}:\ROMs"
     foreach ($d in 'PS2', 'PS1', 'SNES', 'N64', 'GBA', 'NDS', 'GC') {
@@ -570,11 +535,23 @@ try {
     [IO.File]::WriteAllBytes((Join-Path $roms 'PS1\Crash (SLUS_005.94).bin'), (New-Object byte[] 8192))
     [IO.File]::WriteAllBytes((Join-Path $roms 'PS1\Crash (SLUS_005.94).cue'), [Text.Encoding]::ASCII.GetBytes('FILE "Crash (SLUS_005.94).bin" BINARY'))
     [IO.File]::WriteAllBytes((Join-Path $roms 'SNES\Super Mario World.sfc'), (New-Object byte[] 8192))
-    [IO.File]::WriteAllBytes((Join-Path $roms 'N64\Zelda.z64'), (New-Object byte[] 8192))
-    [IO.File]::WriteAllBytes((Join-Path $roms 'GBA\Pokemon.gba'), (New-Object byte[] 8192))
-    [IO.File]::WriteAllBytes((Join-Path $roms 'NDS\Kirby.nds'), (New-Object byte[] 8192))
-    [IO.File]::WriteAllBytes((Join-Path $roms 'GC\Sunshine.gcm'), (New-Object byte[] 8192))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'N64\Zelda.z64'), (New-Object byte[] (128 * 1024)))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'GBA\Pokemon.gba'), (New-Object byte[] (32 * 1024)))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'NDS\Kirby.nds'), (New-Object byte[] (128 * 1024)))
+    [IO.File]::WriteAllBytes((Join-Path $roms 'GC\Sunshine.gcm'), (New-Object byte[] (512 * 1024)))
     [IO.File]::WriteAllBytes((Join-Path $roms 'lixo.txt'), (New-Object byte[] 8192))
+
+    # Falsos positivos que o usuário viu: README.md (Markdown) com extensão de
+    # Mega Drive e um .iso que não é ISO9660. Nenhum dos dois pode aparecer.
+    $readme = Join-Path $roms 'README.md'
+    $texto = ('# Meus jogos' + "`r`n" + ('lista de jogos baixados' + "`r`n")) * 400
+    [IO.File]::WriteAllText($readme, $texto, [Text.Encoding]::UTF8)
+    [IO.File]::WriteAllBytes((Join-Path $roms 'PS2\filme.iso'), [Text.Encoding]::ASCII.GetBytes(('nao sou iso ' * 4000)))
+
+    # Mega Drive de verdade: 16 KB com a assinatura SEGA no offset 0x100.
+    $md = New-Object byte[] (16 * 1024)
+    [Text.Encoding]::ASCII.GetBytes('SEGA MEGA DRIVE ').CopyTo($md, 0x100)
+    [IO.File]::WriteAllBytes((Join-Path $roms 'Sonic (USA).md'), $md)
 
     # A seção 12 removeu a unidade do teste de hot-plug e o app escolheu outra:
     # volta para a unidade virtual antes de conferir a biblioteca.
@@ -609,10 +586,17 @@ try {
     Assert-True ([bool]($lib | Where-Object { $_.Ext -eq '.cue' })) '.cue aparece na lista'
     Assert-True ($ui.LibraryPanel.Children.Count -ge 8) 'linhas desenhadas na biblioteca'
 
+    # ---- filtros de lixo: README.md e .iso falso não entram
+    Assert-True (-not ($lib | Where-Object { $_.Name -eq 'README' })) 'README.md não aparece como jogo'
+    Assert-True (-not ($lib | Where-Object { $_.Name -eq 'filme' })) '.iso que não é ISO9660 não aparece'
+    $md = $lib | Where-Object { $_.Ext -eq '.md' } | Select-Object -First 1
+    Assert-True ($null -ne $md) 'ROM de Mega Drive com assinatura SEGA aparece'
+    Assert-Equal 'MEGA' $md.Platform 'Mega Drive classificado certo'
+
     # ---- status: instalado x pode instalar
     $counts = $S.LibCounts
-    Assert-Equal 4 $ui.LibFilters.Children.Count 'quatro filtros (tudo, instalados, para instalar, outros)'
-    Assert-Equal $counts.all ($counts.installed + $counts.pending + $counts.other) 'as contagens fecham com o total'
+    Assert-Equal 5 $ui.LibFilters.Children.Count 'cinco filtros (tudo, instalados, no pendrive, para instalar, outros)'
+    Assert-Equal $counts.all ($counts.installed + $counts.elsewhere + $counts.pending + $counts.other) 'as contagens fecham com o total'
     Assert-True ($counts.installed -ge 2) "conta os instalados ($($counts.installed))"
     Assert-True ($counts.pending -ge 1) "conta o que pode ser instalado ($($counts.pending))"
     Assert-True ([string]$ui.LibraryInfo.Text -match 'INSTALADO\(S\)') "cabeçalho resume instalados x pendentes ($($ui.LibraryInfo.Text))"
@@ -789,6 +773,88 @@ try {
     $S.Files.Clear()
     Render-Files
     foreach ($t in @($S.TempRoots)) { Remove-TempRoot $t }
+
+    # ============================================================ 13d. jogo já instalado em outra unidade
+    Write-Host ''
+    Write-Host '13d. Aviso: jogo já instalado em outra unidade' -ForegroundColor Cyan
+
+    $S.LibFilter = 'all'
+    $S.InstalledMap = @{ 'SLUS_215.96' = 'F' }
+    Render-Library
+
+    $outro = $ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.File -eq $ps2Novo } | Select-Object -First 1
+    Assert-True ($null -ne $outro) 'linha do jogo aparece com o mapa de outras unidades'
+    Assert-Equal 'elsewhere' $outro.Tag.Status 'jogo de outra unidade = elsewhere'
+    Assert-Equal 'F' $outro.Tag.Where 'a linha sabe em qual unidade ele está'
+    $outroText = @($outro.Child.Children | Where-Object { $_ -is [Windows.Controls.TextBlock] } | ForEach-Object { $_.Text })
+    Assert-True ($outroText -contains 'JÁ NO PENDRIVE F:') 'a linha avisa JÁ NO PENDRIVE F:'
+    Assert-Equal 0 @($outro.Child.Children | Where-Object { $_ -is [Windows.Controls.Button] }).Count 'não oferece instalar de novo'
+    Assert-Equal 'Visible' ([string]$ui.LibWarn.Visibility) 'faixa amarela de aviso aparece'
+    Assert-True ($ui.LibWarn.Text -match 'NÃO PRECISA INSTALAR') "aviso diz que não precisa instalar ($($ui.LibWarn.Text))"
+    Assert-True ($S.LibCounts.elsewhere -ge 1) "contagem NO PENDRIVE ($($S.LibCounts.elsewhere))"
+
+    $elseChip = $ui.LibFilters.Children | Where-Object { [string]$_.Tag -eq 'elsewhere' } | Select-Object -First 1
+    Assert-True ($null -ne $elseChip) 'existe o filtro NO PENDRIVE'
+    Assert-True ([string]$elseChip.Content -match 'NO PENDRIVE') "o filtro mostra a contagem ($($elseChip.Content))"
+    Click $elseChip 'filtro NO PENDRIVE'
+    Assert-Equal 'elsewhere' $S.LibFilter 'filtro NO PENDRIVE ativo'
+    Assert-Equal 0 @($ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.Status -ne 'elsewhere' }).Count 'só mostra jogos de outra unidade'
+
+    $before = $S.Files.Count
+    Add-LibraryGame $outro.Tag
+    Assert-Equal $before $S.Files.Count 'clicar no jogo de outra unidade não enfileira nada'
+
+    # volta ao normal: sem o mapa, o aviso desaparece
+    $S.InstalledMap = @{}
+    $S.LibFilter = 'all'
+    Render-Library
+    Assert-Equal 'Collapsed' ([string]$ui.LibWarn.Visibility) 'sem jogos de fora, a faixa some'
+    Assert-Equal 0 $S.LibCounts.elsewhere 'contagem NO PENDRIVE volta a zero'
+
+    # ============================================================ 13e. glossário e sons
+    Write-Host ''
+    Write-Host '13e. Glossário e sons da interface' -ForegroundColor Cyan
+
+    Assert-Equal 'Collapsed' ([string]$ui.HelpOverlay.Visibility) 'glossário começa fechado'
+    Click $ui.BtnHelp 'BtnHelp'
+    Assert-Equal 'Visible' ([string]$ui.HelpOverlay.Visibility) 'botão ? abre o glossário'
+    Assert-True ($ui.HelpPanel.Children.Count -ge 10) "glossário tem seções e termos ($($ui.HelpPanel.Children.Count))"
+
+    $helpText = @($ui.HelpPanel.Children | Where-Object { $_ -is [Windows.Controls.TextBlock] } | ForEach-Object {
+            if ($_.Inlines.Count -gt 0) { ($_.Inlines | ForEach-Object { $_.Text }) -join ' ' } else { $_.Text }
+        }) -join ' '
+    foreach ($term in 'MODO', 'ul.*', 'ul.cfg', 'JÁ NO PENDRIVE', 'OPL', 'README.md') {
+        Assert-True ($helpText -match [regex]::Escape($term)) "glossário explica $term"
+    }
+
+    Click $ui.BtnHelpClose 'BtnHelpClose'
+    Assert-Equal 'Collapsed' ([string]$ui.HelpOverlay.Visibility) 'FECHAR esconde o glossário'
+
+    # ESC também fecha o glossário
+    Click $ui.BtnHelp 'BtnHelp'
+    $src = [Windows.PresentationSource]::FromVisual($win)
+    $key = New-Object Windows.Input.KeyEventArgs([Windows.Input.Keyboard]::PrimaryDevice, $src, 0, [Windows.Input.Key]::Escape)
+    $key.RoutedEvent = [Windows.UIElement]::KeyDownEvent
+    $win.RaiseEvent($key)
+    Pump 90
+    Assert-Equal 'Collapsed' ([string]$ui.HelpOverlay.Visibility) 'ESC fecha o glossário'
+
+    Assert-True ($S.Snd.Count -ge 6) "sons carregados do disco ($($S.Snd.Count))"
+    foreach ($n in 'hover', 'click', 'boot', 'success', 'error', 'connect', 'disconnect') {
+        Assert-True ($S.Snd.ContainsKey($n)) "som '$n' disponível"
+    }
+    Assert-Equal 'SOM: OFF' ([string]$ui.BtnSound.Content) 'teste começa em silêncio (EASYROMS_MUTE)'
+    Assert-Equal $true $S.Muted 'o modo de teste não toca áudio'
+
+    $ui.BtnSound.IsChecked = $true
+    Click $ui.BtnSound 'BtnSound'
+    Assert-Equal $true $S.Sound 'SOM: ON liga os sons'
+    Assert-Equal 'SOM: ON' ([string]$ui.BtnSound.Content) 'o chip mostra SOM: ON'
+
+    $ui.BtnSound.IsChecked = $false
+    Click $ui.BtnSound 'BtnSound'
+    Assert-Equal $false $S.Sound 'SOM: OFF desliga os sons'
+    Assert-Equal 'SOM: OFF' ([string]$ui.BtnSound.Content) 'o chip mostra SOM: OFF'
 
     # ============================================================ 14. nenhum erro de handler
     Write-Host ''

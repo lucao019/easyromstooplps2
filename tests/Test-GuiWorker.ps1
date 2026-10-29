@@ -27,9 +27,11 @@ try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $repoRoot 'lib\UlFormat.ps1')
 . (Join-Path $repoRoot 'gui\Worker.ps1')
+. (Join-Path $PSScriptRoot 'TestIso.ps1')
 
 $libPath = Join-Path $repoRoot 'lib\UlFormat.ps1'
 
+$explicitIso = [bool]$IsoPath
 if (-not $IsoPath) {
     $candidates = @(
         'E:\emulador PS2\games\Medalha de Honra (SLUS_215.97).iso',
@@ -37,9 +39,24 @@ if (-not $IsoPath) {
     )
     $IsoPath = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 }
-if (-not $IsoPath -or -not (Test-Path -LiteralPath $IsoPath)) {
-    Write-Host 'Nenhum ISO de teste encontrado. Use -IsoPath.' -ForegroundColor Yellow
+if ($IsoPath -and -not (Test-Path -LiteralPath $IsoPath)) {
+    Write-Host "ISO não encontrado: $IsoPath" -ForegroundColor Yellow
     exit 2
+}
+if (-not $IsoPath -and $explicitIso) {
+    Write-Host 'ISO de teste inválido. Use -IsoPath.' -ForegroundColor Yellow
+    exit 2
+}
+
+# O teste instala (cópia do ISO) e exporta (segunda cópia). Sem espaço para as
+# duas, usa um ISO sintético de 38 KB em vez de falhar por disco cheio.
+$synthetic = -not $IsoPath
+if ($IsoPath -and -not $explicitIso) {
+    $need = (Get-Item -LiteralPath $IsoPath).Length * 2.4
+    try {
+        $free = (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot([IO.Path]::GetTempPath()))).AvailableFreeSpace
+        if ($free -lt $need) { $synthetic = $true }
+    } catch { $synthetic = $true }
 }
 
 $script:Passed = 0
@@ -65,6 +82,12 @@ function Assert-True {
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ('er2opl-worker-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $root | Out-Null
+
+if ($synthetic) {
+    $IsoPath = Join-Path $root 'Sintetico (SLUS_215.97).iso'
+    New-TestPs2Iso -Path $IsoPath -Serial 'SLUS_215.97'
+    Write-Host 'Pouco espaço livre: usando um ISO sintético de 38 KB.' -ForegroundColor Yellow
+}
 
 $iso = Get-Item -LiteralPath $IsoPath
 $info = Get-IsoInfo $iso.FullName

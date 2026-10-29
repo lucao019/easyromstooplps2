@@ -142,17 +142,37 @@ entra ou sai.
 
 Na biblioteca você responde às duas perguntas de uma vez:
 
-- **O que já está instalado?** Os filtros **TUDO / INSTALADOS / PARA INSTALAR / OUTROS**
-  mostram a contagem de cada grupo, e o cabeçalho resume:
+- **O que já está instalado?** Os filtros **TUDO / INSTALADOS / NO PENDRIVE / PARA
+  INSTALAR / OUTROS** mostram a contagem de cada grupo, e o cabeçalho resume:
   `7 JOGO(S) · 6 INSTALADO(S) · 1 PARA INSTALAR`. Na coluna **STATUS**:
   - `INSTALADO` (verde) — já aparece no menu do OPL (`ul.*`) ou está em `DVD\`;
   - `JÁ NO OPL` — este arquivo é uma cópia de um jogo que já está em `ul.*`; o app
     reconhece pelo serial, então não oferece instalar de novo;
-  - **INSTALAR** (ciano) — jogo de PS2 que ainda não está no pendrive; o clique manda
-    para a fila.
+  - `JÁ NO PENDRIVE F:` (amarelo) — o jogo já está instalado em **outra unidade**.
+    Uma faixa no topo avisa *"NÃO PRECISA INSTALAR DE NOVO"* e o clique não faz nada.
+    É o caso clássico de abrir a pasta de ISOs do SSD quando os mesmos jogos já
+    estão no pendrive;
+  - **INSTALAR** (ciano) — jogo de PS2 que ainda não está em lugar nenhum; o clique
+    manda para a fila.
 - **O que ainda pode ser instalado?** Filtre por **PARA INSTALAR**. É exatamente o que
   falta. PS1 e Nintendo ficam em **OUTROS**: são **só consulta**, porque o OPL executa
   apenas jogos de PS2.
+
+> **Só entra jogo de verdade.** A biblioteca confere tamanho e conteúdo, não só a
+> extensão: `README.md`, `.txt`, `.nfo`, vídeo renomeado para `.iso`, save pequeno e
+> faixa solta de `.bin` ficam de fora. `.md` só aparece com a assinatura `SEGA` de um
+> Mega Drive. Um disco de PS1 com várias faixas mostra **uma linha** (o `.cue`), não 30.
+
+**Não sabe o que significa `ul.*`, `MODO` ou `PARTES`?** Clique no **`?`** no topo da
+janela. O glossário explica cada formato (`ISO`, `ul.*`, `ul.cfg`, `DVD\`, CUE+BIN,
+ZIP/RAR/7Z), cada coluna (**MODO** = mídia original do jogo, DVD ou CD; **PARTES**;
+**CRC**; **SERIAL**) e cada status. Fecha com **FECHAR** ou **ESC**. A aba OPL também
+tem uma legenda fixa e tooltips nas colunas.
+
+**Sons:** passar o mouse numa opção toca um tique curto; clicar, conectar o pendrive,
+concluir e falhar têm sons próprios — todos sintetizados pelo projeto, sem áudio da
+Sony. O chip **SOM: ON / OFF** liga e desliga, e a escolha fica salva para a próxima
+vez.
 
 A biblioteca também entende **compactados**: `.zip`, `.rar` (inclusive os divididos em
 `.part1.rar`, `.part2.rar`…) e `.7z` aparecem como uma linha com o que têm dentro —

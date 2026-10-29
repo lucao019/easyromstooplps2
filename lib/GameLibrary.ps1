@@ -37,6 +37,30 @@ $script:GameExt = @{
     '.gdi' = 'DC'; '.cdi' = 'DC'
 }
 
+# Tamanho mínimo de um jogo de verdade. Um README.md de 3 KB não é Mega Drive;
+# um save .bin de 2 KB não é imagem de PS1. Isso corta 90% dos falsos positivos.
+$script:GameMinSize = @{
+    '.iso' = 32768; '.bin' = 4096; '.cue' = 0; '.chd' = 32768; '.pbp' = 32768
+    '.img' = 4096; '.mdf' = 4096; '.mds' = 0; '.ccd' = 0
+    '.sfc' = 8192; '.smc' = 8192
+    '.n64' = 65536; '.z64' = 65536; '.v64' = 65536
+    '.gba' = 16384
+    '.gb' = 4096; '.gbc' = 4096
+    '.nds' = 65536
+    '.gcm' = 262144; '.rvz' = 262144; '.wbfs' = 262144
+    '.md' = 8192; '.gen' = 8192; '.smd' = 8192
+    '.sms' = 4096; '.gg' = 4096
+    '.nes' = 8192; '.fds' = 16384
+    '.cso' = 65536
+    '.gdi' = 0; '.cdi' = 262144
+}
+
+# O "capa" de cada par de disco: .bin só é jogo se existir o .cue ao lado.
+$script:CoverExt = @{ '.bin' = '.cue'; '.img' = '.ccd'; '.mdf' = '.mds' }
+
+# Extensões que são arquivos de texto por natureza (não dá para checar conteúdo).
+$script:TextExt = @('.cue', '.ccd', '.mds', '.gdi')
+
 # Arquivos compactados: o jogo pode estar dentro deles (é como os dumps vêm).
 $script:ArchiveExt = @('.zip', '.rar', '.7z')
 
@@ -89,8 +113,124 @@ function Get-GamePlatformRank {
     }
 }
 
-function Get-GameSerialFromName {
+function Get-GameFileHead {
+    param([string]$Path, [int]$Count = 512)
+
+    $fs = $null
+    try {
+        $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+        $n = $Count
+        if ($fs.Length -lt [int64]$Count) { $n = [int]$fs.Length }
+        if ($n -le 0) { return , (New-Object byte[] 0) }
+        $buf = New-Object byte[] $n
+        [void]$fs.Read($buf, 0, $n)
+        return , $buf
+    } catch {
+        return , (New-Object byte[] 0)
+    } finally {
+        if ($fs) { $fs.Dispose() }
+    }
+}
+
+# .cue → nomes de arquivos que ele referencia. Cache por pasta: numa pasta com
+# 30 faixas de .bin, o .cue é lido uma vez só.
+$script:CueRefCache = @{}
+
+function Get-CueFileRefs {
+    param([string]$Dir)
+
+    $key = $Dir.ToLowerInvariant()
+    if ($script:CueRefCache.ContainsKey($key)) { return $script:CueRefCache[$key] }
+
+    $set = @{}
+    try {
+        foreach ($cue in @([IO.Directory]::GetFiles($Dir, '*.cue'))) {
+            try {
+                $txt = [IO.File]::ReadAllText($cue)
+                foreach ($m in [regex]::Matches($txt, '(?im)^\s*FILE\s+(?:"([^"]+)"|(\S+))')) {
+                    $n = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
+                    $set[[IO.Path]::GetFileName($n).ToLowerInvariant()] = $true
+                }
+            } catch { }
+        }
+    } catch { }
+
+    $script:CueRefCache[$key] = $set
+    return $set
+}
+
+function Test-GameTextFile {    <#
+        Um README.md, uma lista.txt ou um .nfo têm extensão parecida com a de
+        jogo, mas são texto. ROM de verdade tem byte zero e binário no começo.
+    #>
+    param([string]$Path)
+
+    $b = Get-GameFileHead $Path 512
+    if ($b.Length -eq 0) { return $true }
+
+    $text = 0
+    $bin = 0
+    foreach ($x in $b) {
+        if ($x -eq 0) { $bin++; continue }
+        if ($x -lt 0x09) { $bin++; continue }
+        if (($x -ge 0x20 -and $x -lt 0x7F) -or $x -eq 0x09 -or $x -eq 0x0A -or $x -eq 0x0D -or $x -ge 0xC2) { $text++ }
+        else { $bin++ }
+    }
+    return ($bin -eq 0 -and $text -gt 0)
+}
+
+function Test-MegaDriveRom {
+    <# ROM de Mega Drive tem "SEGA" no cabeçalho, no offset 0x100. #>
+    param([string]$Path)
+
+    $b = Get-GameFileHead $Path 0x120
+    if ($b.Length -lt 0x104) { return $false }
+    return ([Text.Encoding]::ASCII.GetString($b, 0x100, 4) -eq 'SEGA')
+}
+
+function Test-GameFile {
     <#
+        Confere se o arquivo realmente pode ser um jogo, e não só um arquivo
+        com a extensão certa. Devolve $true/$false; nunca lança.
+    #>
+    param([IO.FileInfo]$File, [string]$Ext)
+
+    $min = 0
+    if ($script:GameMinSize.ContainsKey($Ext)) { $min = [int64]$script:GameMinSize[$Ext] }
+    if ($File.Length -lt $min) { return $false }
+
+    if ($script:TextExt -contains $Ext) { return $true }
+
+    # O ISO não passa por esse teste: o setor de sistema pode vir preenchido
+    # com um byte repetido (0x6D, 0xED…) e parecer "texto". Para .iso quem
+    # decide é a leitura do ISO9660, feita na varredura.
+    if ($Ext -ne '.iso' -and (Test-GameTextFile $File.FullName)) { return $false }
+
+    if ($Ext -in '.md', '.gen') {
+        # .md também é Markdown: só aceita com a assinatura SEGA do console.
+        return ((Test-MegaDriveRom $File.FullName) -or ($File.Length -ge 1048576))
+    }
+
+    if ($Ext -in '.bin', '.img', '.mdf') {
+        # .bin/.img/.mdf solto é quase sempre pedaço de instalador, cache de
+        # jogo de PC ou faixa solta: não é jogo. Só entra quando existe o
+        # .cue/.ccd/.mds do disco — e a lista mostra só a "capa".
+        $cover = [IO.Path]::ChangeExtension($File.FullName, $script:CoverExt[$Ext])
+        return (Test-Path -LiteralPath $cover)
+    }
+
+    return $true
+}
+
+function Test-ArchiveJunkName {
+    <# README.md, LICENSE.txt… dentro de um ZIP não são jogos, mesmo com extensão parecida. #>
+    param([string]$Name)
+
+    $leaf = [IO.Path]::GetFileName($Name)
+    return ($leaf -match '(?i)^(readme|leiame|licen[cs]e|changelog|credits|cr[eé]ditos|notes|notas|todo|install|instalar|manual|instructions?|guia|guide)(\.[a-z0-9]+)?$')
+}
+
+function Get-GameSerialFromName {    <#
         Extrai o serial do nome do arquivo, no formato que os dumps usam:
         "Jogo (SLUS_215.97).iso" ou "Jogo (SLUS-21597).iso".
     #>
@@ -253,6 +393,7 @@ function Get-GameLibrary {
 
     $rootFull = [IO.Path]::GetFullPath($Root)
     if (-not $rootFull.EndsWith('\')) { $rootFull += '\' }
+    $script:CueRefCache = @{}
 
     $found = New-Object System.Collections.ArrayList
     $archives = New-Object System.Collections.ArrayList
@@ -303,11 +444,13 @@ function Get-GameLibrary {
 
             try { $fi = New-Object IO.FileInfo($f) } catch { continue }
 
-            # .cue/.ccd/.mds são arquivos de texto minúsculos: valem mesmo assim.
-            if ($fi.Length -lt 4096 -and $ext -notin '.cue', '.ccd', '.mds') { continue }
+            # Extensão certa não basta: README.md, lista.txt renomeado, save
+            # pequeno… nada disso é jogo. O filtro olha tamanho e conteúdo.
+            if (-not (Test-GameFile -File $fi -Ext $ext)) { continue }
 
             $base = [IO.Path]::GetFileNameWithoutExtension($f)
             $serial = $null
+            $notAnIso = $false
 
             if ($ext -eq '.iso') {
                 $serial = Get-GameSerialFromName $base
@@ -325,9 +468,16 @@ function Get-GameLibrary {
                             $platform = 'PS1'   # serial na capa, mas sem SYSTEM.CNF
                         }
                     } catch {
-                        # não é ISO9660 legível: decide pelo nome/pasta abaixo
+                        # Não é ISO9660: não é jogo, é arquivo qualquer com .iso.
+                        $notAnIso = $true
                     }
                 }
+
+                if ($notAnIso) { continue }
+
+                # ISO que não foi aberto (limite da varredura): jogo de verdade
+                # tem pelo menos 1 MB. Evita .iso de 40 KB que é só lixo.
+                if (-not $NoIsoInspection -and $isoChecks -ge $MaxIsoChecks -and $fi.Length -lt 1048576) { continue }
 
                 if ($platform -eq 'ISO') {
                     $folderName = [IO.Path]::GetFileName($cur.Path)
@@ -367,6 +517,7 @@ function Get-GameLibrary {
 
         if ($list.Ok) {
             foreach ($e in @($list.Entries)) {
+                if (Test-ArchiveJunkName $e) { continue }
                 $iext = [IO.Path]::GetExtension($e).ToLowerInvariant()
                 $ip = $script:GameExt[$iext]
                 if (-not $ip) { continue }
@@ -412,16 +563,35 @@ function Get-GameLibrary {
     }
 
     # .cue+.bin (e .ccd+.img, .mds+.mdf) são o mesmo jogo: fica só a "capa".
+    # Faixas de um jogo com vários .bin (Track 01, Track 02…) também somem: o
+    # .cue já representa o disco inteiro e o app não deve listar 30 linhas.
     $covers = @{}
+    $cueBases = @{}
     foreach ($it in $found) {
         if ($it.Ext -in '.cue', '.ccd', '.mds') {
             $covers[($it.Dir + '|' + $it.Name).ToLowerInvariant()] = $true
+            if ($it.Ext -eq '.cue') { $cueBases[($it.Dir + '|' + $it.Name).ToLowerInvariant()] = $true }
         }
     }
     $items = New-Object System.Collections.ArrayList
     foreach ($it in $found) {
         if ($it.Ext -in '.bin', '.img', '.mdf') {
-            if ($covers.ContainsKey(($it.Dir + '|' + $it.Name).ToLowerInvariant())) { continue }
+            $k = ($it.Dir + '|' + $it.Name).ToLowerInvariant()
+            if ($covers.ContainsKey($k)) { continue }
+
+            if ($it.Ext -eq '.bin') {
+                # faixa citada dentro de algum .cue da pasta
+                if ((Get-CueFileRefs $it.Dir).ContainsKey(($it.Name + $it.Ext).ToLowerInvariant())) { continue }
+
+                # faixa que começa com o nome de um .cue da pasta
+                $hit = $false
+                foreach ($cb in @($cueBases.Keys)) {
+                    if (-not $cb.StartsWith($it.Dir.ToLowerInvariant() + '|')) { continue }
+                    $base = $cb.Substring($it.Dir.Length + 1)
+                    if ($it.Name.ToLowerInvariant().StartsWith($base + ' (')) { $hit = $true; break }
+                }
+                if ($hit) { continue }
+            }
         }
         [void]$items.Add($it)
     }

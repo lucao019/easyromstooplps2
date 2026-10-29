@@ -58,8 +58,9 @@ $ui = @{}
     'StatGames', 'Bar', 'BarText', 'BarPct', 'BtnRefresh', 'GamesPanel', 'BtnCopyLog', 'LogBox',
     'LogHeader', 'LogBody', 'BtnLogToggle', 'BtnAuto', 'LibFilters',
     'StatusText', 'BusyDot', 'Toasts', 'Overlay', 'ConfirmTitle', 'ConfirmText', 'BtnCancelConfirm',
-    'BtnYesConfirm', 'BtnMin', 'BtnMax', 'BtnClose', 'VersionText',
-    'TabOpl', 'TabLibrary', 'LibraryInfo', 'OplView', 'LibraryView', 'LibraryPanel'
+    'BtnYesConfirm', 'BtnMin', 'BtnMax', 'BtnClose', 'VersionText', 'LibWarn',
+    'TabOpl', 'TabLibrary', 'LibraryInfo', 'OplView', 'LibraryView', 'LibraryPanel',
+    'BtnHelp', 'BtnHelpClose', 'BtnSound', 'HelpOverlay', 'HelpPanel'
 ) | ForEach-Object { $ui[$_] = $win.FindName($_) }
 
 # ---------------------------------------------------------------- estado
@@ -88,13 +89,19 @@ $S = @{
     LibScan    = $null          # runspace da varredura em andamento
     LibTimer   = $null
     LibView    = 'opl'          # aba visivel: opl | library
-    LibFilter  = 'all'          # filtro da biblioteca: all | installed | pending | other
-    LibCounts  = $null          # { all, installed, pending, other } da última varredura
+    LibFilter  = 'all'          # filtro da biblioteca: all | installed | elsewhere | pending | other
+    LibCounts  = $null          # { all, installed, elsewhere, pending, other } da última varredura
+    InstalledMap = @{}          # serial -> letra da unidade onde o jogo já está instalado
     AutoInstall = $true         # soltar o jogo já inicia a instalação
     Extract    = $null          # extração de .zip/.rar/.7z em andamento
     ExtractQueue = New-Object System.Collections.ArrayList
     TempRoots  = New-Object System.Collections.ArrayList
     ResultUntil = [datetime]::MinValue   # mantém o resultado da cópia na barra por alguns segundos
+    Sound      = $true          # sons da interface (preferência do usuário)
+    Muted      = $false         # silêncio forçado (testes / EASYROMS_MUTE)
+    Snd        = @{}            # nome -> SoundPlayer
+    HoverKey   = $null          # último elemento que recebeu hover (evita som repetido)
+    HoverAt    = [datetime]::MinValue
 }
 
 $BRUSH = @{}
@@ -103,6 +110,184 @@ function Br([string]$hex) {
         $BRUSH[$hex] = [Windows.Media.BrushConverter]::new().ConvertFromString($hex)
     }
     return $BRUSH[$hex]
+}
+
+# ---------------------------------------------------------------- sons
+# Sons próprios, sintetizados por tools\New-Sounds.ps1. Nada de áudio da Sony:
+# são tons curtos no espírito do console, livres de direitos.
+
+$soundDir = Join-Path $PSScriptRoot 'sounds'
+$settingsPath = $(if ($env:EASYROMS_SETTINGS) {
+        $env:EASYROMS_SETTINGS
+    } else {
+        Join-Path (Join-Path $env:LOCALAPPDATA 'EasyRomsToOPL') 'settings.json'
+    })
+
+function Initialize-Sounds {
+    $mute = [bool]$env:EASYROMS_MUTE
+    if (-not (Test-Path -LiteralPath $soundDir)) { $S.Sound = $false; return }
+
+    foreach ($n in @('hover', 'click', 'boot', 'success', 'error', 'connect', 'disconnect')) {
+        $p = Join-Path $soundDir ($n + '.wav')
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        try {
+            $pl = New-Object System.Media.SoundPlayer $p
+            $pl.Load()
+            $S.Snd[$n] = $pl
+        } catch { }
+    }
+    if ($S.Snd.Count -eq 0) { $S.Sound = $false }
+    if ($mute) { $S.Muted = $true; $S.Sound = $false }
+}
+
+function Play-Sound {
+    param([string]$Name)
+
+    if (-not $S.Sound -or $S.Muted) { return }
+    $p = $S.Snd[$Name]
+    if ($p) { try { $p.Play() } catch { } }
+}
+
+function Load-UiSettings {
+    try {
+        if (Test-Path -LiteralPath $settingsPath) {
+            $cfg = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($null -ne $cfg.sound) { $S.Sound = [bool]$cfg.sound }
+        }
+    } catch { }
+}
+
+function Save-UiSettings {
+    try {
+        $dir = Split-Path -Parent $settingsPath
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+        @{ sound = [bool]$S.Sound } | ConvertTo-Json -Compress | Set-Content -LiteralPath $settingsPath -Encoding UTF8
+    } catch { }
+}
+
+function Get-HoverTarget {
+    <# Sobe do elemento sob o mouse até achar algo clicável (botão, chip, linha, link). #>
+    param($Node)
+
+    $n = $Node
+    for ($i = 0; $i -lt 8 -and $null -ne $n; $i++) {
+        if ($n -is [Windows.Controls.Primitives.ButtonBase]) { return $n }
+        if ($n -is [Windows.FrameworkElement] -and $n.Cursor -and $n.Cursor.ToString() -eq 'Hand') { return $n }
+        if ($n -is [Windows.FrameworkContentElement]) { $n = $n.Parent; continue }
+        if ($n -is [Windows.Media.Visual]) { $n = [Windows.Media.VisualTreeHelper]::GetParent($n); continue }
+        break
+    }
+    return $null
+}
+
+Load-UiSettings
+Initialize-Sounds
+
+$ui.BtnSound.IsChecked = [bool]$S.Sound
+$ui.BtnSound.Content = $(if ($S.Sound) { 'SOM: ON' } else { 'SOM: OFF' })
+
+# Um handler só para a janela inteira: hover e clique valem para os controles
+# fixos e para os que são criados a cada varredura (chips, linhas, botões).
+[void]$win.AddHandler([Windows.UIElement]::MouseEnterEvent, [Windows.Input.MouseEventHandler]{
+        param($sender, $e)
+
+        if (-not $S.Sound) { return }
+        $t = Get-HoverTarget $e.OriginalSource
+        if ($null -eq $t) { return }
+
+        $now = Get-Date
+        if ($t -eq $S.HoverKey -and ($now - $S.HoverAt).TotalMilliseconds -lt 150) { return }
+        $S.HoverKey = $t
+        $S.HoverAt = $now
+        Play-Sound 'hover'
+    }, $true)
+
+[void]$win.AddHandler([Windows.UIElement]::MouseLeftButtonUpEvent, [Windows.Input.MouseButtonEventHandler]{
+        param($sender, $e)
+
+        if (-not $S.Sound) { return }
+        if (Get-HoverTarget $e.OriginalSource) { Play-Sound 'click' }
+    }, $true)
+
+# ---------------------------------------------------------------- glossário
+
+function Add-HelpSection {
+    param($Panel, [string]$Title)
+
+    $t = New-Object Windows.Controls.TextBlock
+    $t.Text = $Title
+    $t.Foreground = Br '#50FA7B'
+    $t.FontSize = 10
+    $t.FontWeight = 'Bold'
+    $t.Margin = New-Object Windows.Thickness(0, 14, 0, 8)
+    [void]$Panel.Children.Add($t)
+}
+
+function Add-HelpRow {
+    param($Panel, [string]$Term, [string]$Text, [string]$Color = '#8BE9FD')
+
+    $tb = New-Object Windows.Controls.TextBlock
+    $tb.TextWrapping = 'Wrap'
+    $tb.Margin = New-Object Windows.Thickness(0, 0, 0, 7)
+    $tb.LineHeight = 18
+
+    $r1 = New-Object Windows.Documents.Run($Term)
+    $r1.Foreground = Br $Color
+    $r1.FontWeight = 'Bold'
+    $r2 = New-Object Windows.Documents.Run('  ' + $Text)
+    $r2.Foreground = Br '#AAAAAA'
+
+    [void]$tb.Inlines.Add($r1)
+    [void]$tb.Inlines.Add($r2)
+    [void]$Panel.Children.Add($tb)
+}
+
+function Render-Help {
+    $p = $ui.HelpPanel
+    $p.Children.Clear()
+
+    Add-HelpSection $p 'FORMATOS DE JOGO'
+    Add-HelpRow $p 'ISO' 'imagem do disco do jogo (PS1, PS2, GameCube…). É o arquivo que você arrasta para a janela.'
+    Add-HelpRow $p 'ul.*' 'formato do OPL USB: o ISO é cortado em pedaços de 1 GiB (ul.CRC.SERIAL.00, .01, .02…). O FAT32 não aceita arquivo maior que 4 GB, então o console lê em partes. É o que o INSTALAR grava.'
+    Add-HelpRow $p 'ul.cfg' 'índice do OPL: 64 bytes por jogo (nome, serial, número de pedaços, mídia e CRC). Sem ele o jogo não aparece no menu do console.'
+    Add-HelpRow $p 'DVD\' 'pasta com o ISO inteiro, sem dividir. O OPL lê direto — prático para jogos pequenos; não precisa de ul.cfg.'
+    Add-HelpRow $p 'ZIP / RAR / 7Z' 'jogo compactado. O app lê só o índice para listar e extrai na hora de instalar — nada é descompactado só para mostrar a lista.'
+    Add-HelpRow $p 'CUE + BIN' 'par de um jogo de PS1 (o .cue é a capa que aponta para os dados). O mesmo vale para CCD+IMG e MDS+MDF. O app mostra uma linha só, sem duplicar.'
+    Add-HelpRow $p 'ARQUIVO' 'compactado que o app não conseguiu abrir (senha, corrompido ou sem descompactador). O botão avisa o motivo.' '#FF5555'
+
+    Add-HelpSection $p 'COLUNAS DA LISTA'
+    Add-HelpRow $p 'MODO' 'mídia original do jogo, gravada no ul.cfg: DVD (jogo em DVD) ou CD (jogo em CD). O OPL usa isso para montar a imagem. Em DVD\ a coluna mostra ISO.'
+    Add-HelpRow $p 'PARTES' 'em quantos pedaços de 1 GiB o jogo foi dividido.'
+    Add-HelpRow $p 'CRC' 'assinatura que o OPL calcula a partir do nome. Se não bater, o jogo aparece no menu e não abre.'
+    Add-HelpRow $p 'SERIAL' 'código do jogo (ex.: SLUS_215.97), lido do SYSTEM.CNF dentro do ISO.'
+    Add-HelpRow $p 'TAMANHO' 'tamanho do arquivo na unidade.'
+
+    Add-HelpSection $p 'STATUS DA BIBLIOTECA'
+    Add-HelpRow $p 'INSTALADO' 'já está nesta unidade no formato que o OPL lê (ul.* ou DVD\).' '#50FA7B'
+    Add-HelpRow $p 'JÁ NO OPL' 'este arquivo é uma cópia de um jogo que já está em ul.* (mesmo serial). Não precisa instalar de novo.' '#50FA7B'
+    Add-HelpRow $p 'JÁ NO PENDRIVE' 'o jogo já está instalado em OUTRA unidade (ex.: F:). Também não precisa instalar de novo.' '#F1FA8C'
+    Add-HelpRow $p 'INSTALAR' 'jogo de PS2 que ainda não está em lugar nenhum. O clique manda para a fila de instalação.' '#8BE9FD'
+    Add-HelpRow $p 'OUTROS' 'PS1, SNES, N64… o OPL executa só PS2; ficam na lista para consulta.' '#666666'
+
+    Add-HelpSection $p 'O QUE O APP IGNORA'
+    Add-HelpRow $p 'ARQUIVOS QUE NÃO SÃO JOGO' 'README.md, .txt, .nfo, saves pequenos e qualquer arquivo com extensão de jogo mas conteúdo de texto ficam de fora. O app confere tamanho e conteúdo, não só o nome.' '#FFB86C'
+    Add-HelpRow $p 'PASTAS DO SISTEMA' '$RECYCLE.BIN, System Volume Information, .git, node_modules, ART, CFG, CHT, LNG, THM, VMC.' '#FFB86C'
+
+    Add-HelpSection $p 'PLATAFORMAS'
+    Add-HelpRow $p 'OPL' 'Open PS2 Loader: o programa que roda no PS2 e lê os jogos do pendrive. Ele executa apenas jogos de PlayStation 2.'
+    Add-HelpRow $p 'PS1, SNES, N64, GBA, NDS, GC/WII, MEGA, MASTER, NES, PSP, DC' 'aparecem na biblioteca para você saber o que tem na unidade; o OPL não executa esses formatos.'
+
+    Add-HelpSection $p 'SONS'
+    Add-HelpRow $p 'SOM: ON / OFF' 'liga e desliga os sons de hover, clique, conexão e fim de instalação. São tons sintetizados pelo próprio app — nenhum áudio da Sony é usado. A escolha fica salva para a próxima vez.'
+}
+
+function Show-Help {
+    if ($ui.HelpPanel.Children.Count -eq 0) { Render-Help }
+    $ui.HelpOverlay.Visibility = [Windows.Visibility]::Visible
+}
+
+function Hide-Help {
+    $ui.HelpOverlay.Visibility = [Windows.Visibility]::Collapsed
 }
 
 # ---------------------------------------------------------------- helpers de UI
@@ -469,6 +654,8 @@ function Sync-Drives {
 
     foreach ($l in $added) { Add-Log ("Unidade conectada: {0}:" -f $l) 'ok' }
     foreach ($l in $removed) { Add-Log ("Unidade removida: {0}:" -f $l) 'warn' }
+    if ($added.Count -gt 0) { Play-Sound 'connect' }
+    if ($removed.Count -gt 0) { Play-Sound 'disconnect' }
 
     if ($removed -contains $selected) {
         if ($S.Drive) {
@@ -1238,6 +1425,13 @@ function Start-LibraryScan {
     $ulPath = Join-Path $repoRoot 'lib\UlFormat.ps1'
     $libPath = Join-Path $repoRoot 'lib\GameLibrary.ps1'
 
+    # Outras unidades: usadas para avisar "já está no pendrive F:" quando o
+    # jogo existe na unidade aberta e também está instalado em outra.
+    $otherRoots = @()
+    foreach ($d in @($S.Drives)) {
+        if ($d.Letter -and $d.Letter -ne $letter) { $otherRoots += $d.Root }
+    }
+
     $rs = [runspacefactory]::CreateRunspace()
     $rs.ApartmentState = 'STA'
     $rs.ThreadOptions = 'ReuseThread'
@@ -1246,10 +1440,35 @@ function Start-LibraryScan {
     $ps = [powershell]::Create()
     $ps.Runspace = $rs
     [void]$ps.AddScript({
-        param($UlPath, $LibPath, $Root, $MaxDepth, $Limit, $MaxIso)
+        param($UlPath, $LibPath, $Root, $MaxDepth, $Limit, $MaxIso, $OtherRoots)
         . $UlPath
         . $LibPath
-        Get-GameLibrary -Root $Root -MaxDepth $MaxDepth -Limit $Limit -MaxIsoChecks $MaxIso -Report
+
+        $report = Get-GameLibrary -Root $Root -MaxDepth $MaxDepth -Limit $Limit -MaxIsoChecks $MaxIso -Report
+
+        # Jogos já instalados nas outras unidades (ul.cfg + DVD\*.iso).
+        $map = @{}
+        foreach ($r in @($OtherRoots)) {
+            if (-not $r) { continue }
+            $let = ([string]$r).Substring(0, 1).ToUpperInvariant()
+            try {
+                foreach ($e in @(Read-UlEntries $r)) {
+                    if ($e.Serial) { $map[[string]$e.Serial] = $let }
+                }
+            } catch { }
+            $dvd = Join-Path $r 'DVD'
+            if (Test-Path -LiteralPath $dvd) {
+                foreach ($iso in @(Get-ChildItem $dvd -File -Filter *.iso -ErrorAction SilentlyContinue)) {
+                    try {
+                        $info = Get-IsoInfo $iso.FullName
+                        if ($info.Serial) { $map[[string]$info.Serial] = $let }
+                    } catch { }
+                }
+            }
+        }
+
+        Add-Member -InputObject $report -NotePropertyName InstalledElsewhere -NotePropertyValue $map -Force
+        $report
     })
     [void]$ps.AddArgument($ulPath)
     [void]$ps.AddArgument($libPath)
@@ -1257,6 +1476,7 @@ function Start-LibraryScan {
     [void]$ps.AddArgument(4)
     [void]$ps.AddArgument(800)
     [void]$ps.AddArgument(60)
+    [void]$ps.AddArgument($otherRoots)
 
     $handle = $ps.BeginInvoke()
     $S.LibScan = [pscustomobject]@{
@@ -1305,6 +1525,7 @@ function Update-LibraryScan {
 
     $S.Lib = @($report.Items)
     $S.LibReport = $report
+    $S.InstalledMap = $(if ($report.InstalledElsewhere) { $report.InstalledElsewhere } else { @{} })
     Add-Log ("Biblioteca: {0} jogo(s) em {1}:" -f $report.Count, $scan.Letter) 'dim'
     Render-Library
 }
@@ -1350,6 +1571,9 @@ function Get-LibraryRows {
             if ($it.Serial -and $serials.ContainsKey([string]$it.Serial)) {
                 # o arquivo é o mesmo jogo que já está em ul.*: nada a instalar
                 $status = 'installed'; $where = 'COPIA'
+            } elseif ($it.Serial -and $S.InstalledMap.ContainsKey([string]$it.Serial)) {
+                # está instalado em OUTRA unidade (ex.: o pendrive F:)
+                $status = 'elsewhere'; $where = [string]$S.InstalledMap[[string]$it.Serial]
             } else {
                 $status = 'pending'
             }
@@ -1357,8 +1581,9 @@ function Get-LibraryRows {
 
         [void]$rows.Add([pscustomobject]@{
             Platform = $it.Platform; Label = $it.PlatformLabel; Name = $it.Name
-            Rel = $it.Rel; Size = $it.Size; SizeText = (Format-Size $it.Size)
-            Instalado = ($status -eq 'installed'); Status = $status; Where = $where
+            Rel = $it.Rel; Size = $it.Size
+            SizeText = $(if ($it.Size -lt 1024) { '—' } else { Format-Size $it.Size })
+            Instalado = ($status -in 'installed', 'elsewhere'); Status = $status; Where = $where
             File = $it.File; Serial = $it.Serial
             Container = ($it.Kind -eq 'archive'); Inner = $it.Inner; InnerCount = $it.InnerCount
         })
@@ -1376,8 +1601,9 @@ function Update-LibFilters {
 
     $defs = @(
         @{ Id = 'all';       Label = 'TUDO';          Tip = 'Tudo que existe na unidade' },
-        @{ Id = 'installed'; Label = 'INSTALADOS';    Tip = 'Já aparecem no menu do OPL (ul.*) ou estão em DVD\' },
-        @{ Id = 'pending';   Label = 'PARA INSTALAR'; Tip = 'Jogos de PS2 que ainda não estão no OPL' },
+        @{ Id = 'installed'; Label = 'INSTALADOS';    Tip = 'Já aparecem no menu do OPL (ul.*) ou estão em DVD\ desta unidade' },
+        @{ Id = 'elsewhere'; Label = 'NO PENDRIVE';   Tip = 'Já estão instalados em OUTRA unidade — não precisa instalar de novo' },
+        @{ Id = 'pending';   Label = 'PARA INSTALAR'; Tip = 'Jogos de PS2 que ainda não estão instalados em lugar nenhum' },
         @{ Id = 'other';     Label = 'OUTROS';        Tip = 'PS1 e Nintendo: só consulta, o OPL executa apenas PS2' }
     )
 
@@ -1407,24 +1633,39 @@ function Render-Library {
     $counts = @{
         all       = $all.Count
         installed = @($all | Where-Object { $_.Status -eq 'installed' }).Count
+        elsewhere = @($all | Where-Object { $_.Status -eq 'elsewhere' }).Count
         pending   = @($all | Where-Object { $_.Status -eq 'pending' }).Count
         other     = @($all | Where-Object { $_.Status -eq 'other' }).Count
     }
     $S.LibCounts = $counts
     Update-LibFilters $counts
 
+    # Aviso em amarelo: estes jogos já estão instalados em outra unidade.
+    if ($counts.elsewhere -gt 0) {
+        $lets = @($all | Where-Object { $_.Status -eq 'elsewhere' } | ForEach-Object { $_.Where } |
+            Select-Object -Unique | Sort-Object)
+        $ui.LibWarn.Text = ('{0} JOGO(S) DESTA UNIDADE JÁ ESTÃO NO PENDRIVE {1}: — NÃO PRECISA INSTALAR DE NOVO' -f
+            $counts.elsewhere, ($lets -join ', '))
+        $ui.LibWarn.Visibility = [Windows.Visibility]::Visible
+    } else {
+        $ui.LibWarn.Text = ''
+        $ui.LibWarn.Visibility = [Windows.Visibility]::Collapsed
+    }
+
     if ($all.Count -eq 0) {
         if ($S.LibView -eq 'library') { $ui.LibraryInfo.Text = '0 JOGO(S)' }
         if (-not $S.Drive) {
             Show-LibraryMessage 'SELECIONE UMA UNIDADE'
         } else {
-            Show-LibraryMessage ("NENHUM JOGO ENCONTRADO EM {0}:`n`nFormatos reconhecidos: PS2 .iso · PS1 .bin/.cue/.chd`nSNES .sfc · N64 .n64 · GBA .gba · NDS .nds · GC .gcm`nCompactados .zip .rar .7z também são abertos para ver o jogo de dentro" -f $S.Drive)
+            Show-LibraryMessage ("NENHUM JOGO ENCONTRADO EM {0}:`n`nO app só lista arquivos que são jogos de verdade (tamanho e conteúdo conferidos).`nFormatos: PS2 .iso · PS1 .bin/.cue/.chd · SNES .sfc · N64 .n64`nGBA .gba · NDS .nds · GC .gcm · Mega .md — e .zip/.rar/.7z" -f $S.Drive)
         }
         return
     }
 
     if ($S.LibView -eq 'library') {
-        $info = ('{0} JOGO(S) · {1} INSTALADO(S) · {2} PARA INSTALAR' -f $all.Count, $counts.installed, $counts.pending)
+        $info = ('{0} JOGO(S) · {1} INSTALADO(S)' -f $all.Count, $counts.installed)
+        if ($counts.elsewhere -gt 0) { $info += (' · {0} NO PENDRIVE' -f $counts.elsewhere) }
+        $info += (' · {0} PARA INSTALAR' -f $counts.pending)
         if ($counts.other -gt 0) { $info += (' · {0} OUTRO(S)' -f $counts.other) }
         if ($S.LibReport -and $S.LibReport.Truncated) { $info = 'MOSTRANDO ' + $info }
         $ui.LibraryInfo.Text = $info
@@ -1432,6 +1673,7 @@ function Render-Library {
 
     $rows = switch ($S.LibFilter) {
         'installed' { @($all | Where-Object { $_.Status -eq 'installed' }) }
+        'elsewhere' { @($all | Where-Object { $_.Status -eq 'elsewhere' }) }
         'pending'   { @($all | Where-Object { $_.Status -eq 'pending' }) }
         'other'     { @($all | Where-Object { $_.Status -eq 'other' }) }
         default     { $all }
@@ -1440,7 +1682,8 @@ function Render-Library {
     if ($rows.Count -eq 0) {
         $msg = switch ($S.LibFilter) {
             'installed' { 'NADA INSTALADO NESTA UNIDADE`n`nSolte um jogo ou veja PARA INSTALAR.' }
-            'pending'   { 'NADA PARA INSTALAR`n`nTodo jogo de PS2 desta unidade já está no OPL.' }
+            'elsewhere' { 'NENHUM JOGO DESTA UNIDADE ESTÁ INSTALADO EM OUTRA' }
+            'pending'   { 'NADA PARA INSTALAR`n`nTodo jogo de PS2 desta unidade já está instalado.' }
             'other'     { 'NENHUM JOGO DE OUTRA PLATAFORMA NESTA UNIDADE' }
             default     { 'NENHUM JOGO' }
         }
@@ -1529,7 +1772,8 @@ function Render-Library {
         [Windows.Controls.Grid]::SetColumn($sz, 2)
         [void]$grid.Children.Add($sz)
 
-        # status / ação: INSTALADO (já no OPL), JÁ NO OPL (cópia) ou INSTALAR
+        # status / ação: INSTALADO (já no OPL), JÁ NO OPL (cópia),
+        # JÁ NO PENDRIVE (outra unidade) ou INSTALAR
         if ($r.Status -eq 'installed') {
             $act = New-Object Windows.Controls.TextBlock
             $act.Text = $(if ($r.Where -eq 'COPIA') { 'JÁ NO OPL' } else { 'INSTALADO' })
@@ -1542,6 +1786,14 @@ function Render-Library {
                 'DVD\'      { 'Está em DVD\ — o OPL lê esse ISO direto, sem instalar' }
                 default     { 'Já aparece no menu do OPL' }
             })
+        } elseif ($r.Status -eq 'elsewhere') {
+            $act = New-Object Windows.Controls.TextBlock
+            $act.Text = ('JÁ NO PENDRIVE {0}:' -f $r.Where)
+            $act.Foreground = Br '#F1FA8C'
+            $act.FontSize = 9
+            $act.FontWeight = 'Bold'
+            $act.VerticalAlignment = 'Center'
+            $act.ToolTip = ('Este jogo já está instalado no pendrive {0}: — não precisa instalar de novo.' -f $r.Where)
         } elseif ($r.Status -eq 'pending' -and $r.File) {
             $act = New-Object Windows.Controls.Button
             $act.Style = $win.FindResource('BtnTiny')
@@ -1558,6 +1810,7 @@ function Render-Library {
             $act.FontSize = 9
             $act.VerticalAlignment = 'Center'
         }
+        $act.Margin = New-Object Windows.Thickness(0, 0, 10, 0)
         [Windows.Controls.Grid]::SetColumn($act, 3)
         [void]$grid.Children.Add($act)
 
@@ -1580,6 +1833,8 @@ function Add-LibraryGame {
     if ($Item.Instalado) {
         if ($Item.Where -eq 'COPIA') {
             Show-Toast 'Já está no OPL' ('{0} é o mesmo jogo que já está instalado em ul.*' -f $Item.Name) 'warn'
+        } elseif ($Item.Status -eq 'elsewhere') {
+            Show-Toast 'Já está no pendrive' ('{0} já está instalado em {1}: — não precisa instalar de novo.' -f $Item.Name, $Item.Where) 'warn'
         } else {
             Show-Toast 'Já está no pendrive' ('{0} já aparece no menu do OPL.' -f $Item.Name) 'warn'
         }
@@ -1738,10 +1993,12 @@ function Update-Worker {
             $ui.BarText.Text = 'CONCLUÍDO COM ERROS'
             Set-Status 'CONCLUÍDO COM ERROS' '#FF5555'
             Show-Toast 'Falha na operação' ('{0} item(ns) falharam. Veja o log.' -f $sync.Failed) 'error'
+            Play-Sound 'error'
         } else {
             $ui.BarText.Text = 'CONCLUÍDO'
             Set-Status 'PRONTO' '#50FA7B'
             Show-Toast 'Concluído' 'Pendrive pronto para usar no PS2.' 'ok'
+            Play-Sound 'success'
         }
 
         Load-Games
@@ -1951,6 +2208,17 @@ $ui.BtnMax.Add_Click({
     $win.WindowState = if ($win.WindowState -eq 'Maximized') { 'Normal' } else { 'Maximized' }
 })
 
+# glossário e som
+$ui.BtnHelp.Add_Click({ Show-Help })
+$ui.BtnHelpClose.Add_Click({ Hide-Help })
+$ui.BtnSound.Add_Click({
+    $S.Sound = [bool]$ui.BtnSound.IsChecked
+    $ui.BtnSound.Content = $(if ($S.Sound) { 'SOM: ON' } else { 'SOM: OFF' })
+    Save-UiSettings
+    Play-Sound 'click'
+    Add-Log ('Sons da interface: {0}' -f $(if ($S.Sound) { 'LIGADOS' } else { 'DESLIGADOS' })) 'dim'
+})
+
 $ui.BtnInstall.Add_Click({ Start-Install })
 
 $ui.BtnRefresh.Add_MouseLeftButtonUp({
@@ -2045,10 +2313,23 @@ function Hide-ConfirmIfOpen {
 
 $win.Add_KeyDown({
     param($sender, $e)
-    if ($e.Key -eq 'Escape') { Hide-ConfirmIfOpen }
+    if ($e.Key -eq 'Escape') {
+        if ($ui.HelpOverlay.Visibility -eq 'Visible') {
+            Hide-Help
+            $e.Handled = $true
+            return
+        }
+        Hide-ConfirmIfOpen
+    }
 })
 
 # ---------------------------------------------------------------- boot
+
+# Som de abertura no estilo do console (sintetizado pelo app; nada da Sony).
+# Não toca no modo de captura de tela nem quando o som está desligado.
+if (-not $env:EASYROMS_SNAPSHOT) {
+    $win.Add_Loaded({ Play-Sound 'boot' })
+}
 
 # A versão vem do CHANGELOG (um lugar só para lembrar de atualizar).
 try {
@@ -2131,7 +2412,10 @@ if ($env:EASYROMS_SNAPSHOT) {
         [Windows.Threading.Dispatcher]::PushFrame($frame)
     }
 
-    if ($env:EASYROMS_SNAPSHOT_VIEW -eq 'library' -and $S.Drive) {
+    if ($env:EASYROMS_SNAPSHOT_VIEW -eq 'help') {
+        Show-Help
+        Wait-Snapshot 400
+    } elseif ($env:EASYROMS_SNAPSHOT_VIEW -eq 'library' -and $S.Drive) {
         Set-GamesView 'library'
         Start-LibraryScan
         $deadline = (Get-Date).AddSeconds(20)

@@ -6,7 +6,7 @@
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![PS2](https://img.shields.io/badge/PlayStation%202-OPL%20USB-003791?logo=playstation&logoColor=white)
 ![GUI](https://img.shields.io/badge/interface-WPF%20nativa-8BE9FD)
-![Testes](https://img.shields.io/badge/testes-224%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-268%20passando-brightgreen)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 
 **Interface gráfica** (arrastar e soltar) e **CLI** — as duas usando o mesmo motor.
@@ -40,11 +40,26 @@ Sem instalação, sem Electron, sem runtime extra: é WPF nativo do Windows.
   N64, GBA, GB/GBC, NDS, GC/Wii, Mega Drive, Master System, NES, PSP e Dreamcast.
   PS1 e Nintendo aparecem só para consulta — **o OPL executa apenas PS2**.
 - **Instalado x para instalar, sem adivinhação.** A coluna **STATUS** e os filtros
-  **TUDO / INSTALADOS / PARA INSTALAR / OUTROS**, todos com contagem, dizem o que já
-  está no pendrive e o que ainda pode entrar. Cada linha mostra `INSTALADO`, `JÁ NO
-  OPL` (o arquivo é uma cópia de um jogo que já está em `ul.*`, reconhecido pelo
-  serial) ou o botão **INSTALAR**. O cabeçalho resume:
+  **TUDO / INSTALADOS / NO PENDRIVE / PARA INSTALAR / OUTROS**, todos com contagem,
+  dizem o que já está no pendrive e o que ainda pode entrar. Cada linha mostra
+  `INSTALADO`, `JÁ NO OPL` (o arquivo é uma cópia de um jogo que já está em `ul.*`,
+  reconhecido pelo serial), `JÁ NO PENDRIVE F:` (instalado em outra unidade) ou o
+  botão **INSTALAR**. O cabeçalho resume:
   `7 JOGO(S) · 6 INSTALADO(S) · 1 PARA INSTALAR`.
+- **Jogo já instalado no SSD não pede instalação de novo.** Se você abre a pasta de
+  ISOs do SSD e os mesmos jogos já estão no pendrive, a linha fica amarela
+  (`JÁ NO PENDRIVE F:`) e uma faixa avisa: *"NÃO PRECISA INSTALAR DE NOVO"*. A
+  comparação é pelo **serial de dentro do ISO**, não pelo nome do arquivo.
+- **Só jogo de verdade.** `README.md`, `.txt`, `.nfo`, vídeo renomeado para `.iso`,
+  save pequeno, faixa solta de `.bin` — nada disso entra na biblioteca. O app
+  confere tamanho, conteúdo e, no caso do ISO, se ele abre mesmo como ISO9660.
+  `.md` só aparece se tiver a assinatura `SEGA` de um Mega Drive de verdade.
+- **Glossário embutido.** O botão **`?`** no topo explica cada formato (`ISO`,
+  `ul.*`, `ul.cfg`, `DVD\`, CUE+BIN), cada coluna (**MODO**, PARTES, CRC, SERIAL) e
+  cada status. A aba OPL também tem uma legenda fixa e tooltips nas colunas.
+- **Sons discretos.** Tique ao passar o mouse, clique, conexão/remoção do pendrive,
+  sucesso e erro — **sons próprios, sintetizados pelo projeto** (nada de áudio da
+  Sony). O chip **SOM: ON / OFF** liga e desliga, e a escolha fica salva.
 - **Compactados na biblioteca.** `.zip`, `.rar` (inclusive multi-volume) e `.7z`
   aparecem com o que têm dentro (`… · 1 jogo(s) dentro · God of War.iso`). O app lê
   só o índice do arquivo — nada é extraído só para listar — e o **INSTALAR** extrai
@@ -61,6 +76,8 @@ Sem instalação, sem Electron, sem runtime extra: é WPF nativo do Windows.
   selecionado sair, o app avisa e escolhe outro automaticamente.
 
 ![Biblioteca de jogos: o que está instalado e o que pode ser instalado](docs/screenshot-biblioteca.png)
+
+![Glossário: formatos, colunas e status explicados na própria janela](docs/screenshot-glossario.png)
 
 O visual segue os tokens do `terminal.css` (a biblioteca de componentes usada como
 referência): fundo `#050505`, ciano `#8BE9FD`, JetBrains Mono com fallback para
@@ -136,7 +153,7 @@ Nada de dependências: nem Node, nem Electron, nem módulo PowerShell.
 
 ### Instalador (recomendado)
 
-Baixe **`dist/Instalar-EasyRomsToOPL.cmd`** (um arquivo só, ~245 KB) e dê duplo clique.
+Baixe **`dist/Instalar-EasyRomsToOPL.cmd`** (um arquivo só, ~583 KB) e dê duplo clique.
 Ele instala em `%LOCALAPPDATA%\EasyRomsToOPL` e cria os atalhos:
 
 - **Área de Trabalho** → `EasyRomsToOPL`
@@ -288,7 +305,7 @@ separado (`gui/Worker.ps1`) para não travar a janela.
 # 20 asserções do worker da GUI: instala, exporta, cancela
 .\tests\Test-GuiWorker.ps1
 
-# 187 asserções da interface: clica em todo controle, instala, remove e varre a unidade
+# 231 asserções da interface: clica em todo controle, instala, remove e varre a unidade
 .\tests\Test-GuiUi.ps1
 ```
 
@@ -304,27 +321,40 @@ Os vetores de CRC não foram inventados: saíram de um pendrive real, com jogos 
 por ferramenta oficial. Se os testes passam, o CRC é bit a bit o do OPL.
 
 O `Test-GuiWorker.ps1` roda o **mesmo** `gui/Worker.ps1` que a interface usa, num
-diretório temporário: instala um ISO real, remonta o `.iso`, confere serial e tamanho,
-e valida o cancelamento. Se ele passa, a GUI não tem caminho de cópia divergente.
+diretório temporário: instala um ISO, remonta o `.iso`, confere serial e tamanho, e
+valida o cancelamento. Se ele passa, a GUI não tem caminho de cópia divergente. Ele usa
+um jogo real quando há espaço para as duas cópias (~2,4× o tamanho do ISO); com o disco
+cheio, gera um ISO sintético de 38 KB — o caminho de cópia é o mesmo.
 
 O `Test-GuiUi.ps1` abre a janela de verdade (WPF) e **clica em cada controle**: chips de
 unidade, INSTALAR, LIMPAR LISTA, RECARREGAR, COPIAR, ✕ dos arquivos, ✕ dos jogos
-(cancelar / ESC / confirmar), ISO (exportar), minimizar / maximizar / fechar — e ainda
-faz uma varredura que clica no que sobrou. Ele usa uma unidade virtual (`subst`) para
-nunca gravar em disco real, e falha se qualquer handler lançar exceção. Foi esse teste
-que encontrou o bug do clique que fechava o programa. Ele também simula um pendrive
-entrando e saindo (`subst`) e confere que a unidade aparece/some sozinha.
+(cancelar / ESC / confirmar), ISO (exportar), glossário **`?`**, **SOM: ON/OFF**,
+minimizar / maximizar / fechar — e ainda faz uma varredura que clica no que sobrou.
+Ele usa uma unidade virtual (`subst`) para nunca gravar em disco real, e falha se
+qualquer handler lançar exceção. Foi esse teste que encontrou o bug do clique que
+fechava o programa. Ele também simula um pendrive entrando e saindo (`subst`) e
+confere que a unidade aparece/some sozinha.
 
 O painel do dispositivo é testado de verdade: escreve 16 MB na unidade virtual **sem
 clicar em nada** e espera o texto de usado/livre mudar sozinho — é assim que o teste
 prova que o número é em tempo real e não uma foto do momento em que a tela abriu.
 
-A seção da biblioteca monta uma árvore de ROMs (PS1, SNES, N64, GBA, NDS, GC) e dois ISOs
-de PS2 **sintéticos** (ISO9660 + `SYSTEM.CNF`, gerados na hora), para conferir a
-classificação de cada plataforma, a leitura do serial de dentro da imagem, o `.cue`/`.bin`
-sem duplicata, o **STATUS** de cada linha (um ISO com o serial que já está no `ul.cfg`
-nasce `JÁ NO OPL`; um jogo novo nasce com o botão **INSTALAR**), os quatro filtros com
-contagem e a fila sendo limpa depois de instalar.
+A seção da biblioteca monta uma árvore de ROMs (PS1, SNES, N64, GBA, NDS, GC, Mega
+Drive) e dois ISOs de PS2 **sintéticos** (ISO9660 + `SYSTEM.CNF`, gerados na hora),
+para conferir a classificação de cada plataforma, a leitura do serial de dentro da
+imagem, o `.cue`/`.bin` sem duplicata, o **STATUS** de cada linha (um ISO com o serial
+que já está no `ul.cfg` nasce `JÁ NO OPL`; um jogo novo nasce com o botão
+**INSTALAR**), os **cinco filtros** com contagem e a fila sendo limpa depois de
+instalar. Ela também planta os falsos positivos que o usuário viu — `README.md` e um
+`.iso` que não é ISO9660 — e exige que **não** apareçam, além de um Mega Drive com a
+assinatura `SEGA` que **precisa** aparecer.
+
+O aviso de outra unidade é simulado com um mapa de serial → letra: a linha vira
+`JÁ NO PENDRIVE F:`, não oferece botão, a faixa amarela aparece, o filtro **NO
+PENDRIVE** isola os casos e o clique não enfileira nada. O glossário é aberto e
+fechado (`?`, **FECHAR** e **ESC**) e o texto é conferido termo a termo (`MODO`,
+`ul.*`, `ul.cfg`, `OPL`, `README.md`). O chip de som alterna **ON/OFF** e o teste
+confere que os sete WAVs carregaram — em silêncio, via `EASYROMS_MUTE=1`.
 
 A última seção cria um **ZIP**, um **RAR** e um **7Z** com ISOs sintéticos: solta o ZIP e
 o RAR na janela (extração em segundo plano, instalação automática, nome correto e
@@ -367,7 +397,7 @@ easyromstooplps2/
 ├── Instalar-EasyRomsToOPL.ps1 # instalador: copia, cria atalhos, desinstala
 ├── Instalar-EasyRomsToOPL.cmd # instalador (duplo clique)
 ├── dist/
-│   └── Instalar-EasyRomsToOPL.cmd  # instalador de arquivo único (~245 KB)
+│   └── Instalar-EasyRomsToOPL.cmd  # instalador de arquivo único (~583 KB)
 ├── lib/
 │   ├── UlFormat.ps1           # CRC, entrada de 64 bytes, ISO9660, motor de instalação
 │   └── GameLibrary.ps1        # varredura da unidade: jogos por plataforma
@@ -375,21 +405,24 @@ easyromstooplps2/
 │   ├── EasyRomsToOPL.GUI.ps1  # front-end WPF
 │   ├── MainWindow.xaml        # layout e tema (tokens do terminal.css)
 │   ├── Worker.ps1             # execução assíncrona (runspace + progresso)
-│   └── EasyRomsToOPL.ico      # ícone do atalho
+│   ├── EasyRomsToOPL.ico      # ícone do atalho
+│   └── sounds/                # hover, click, boot, success, error, connect, disconnect
 ├── tools/
 │   ├── New-Icon.ps1           # gera o .ico (16…256)
+│   ├── New-Sounds.ps1         # sintetiza os WAVs da interface (nada de áudio da Sony)
 │   ├── Build-Installer.ps1    # gera dist/Instalar-EasyRomsToOPL.cmd
 │   └── Test-OplPendrive.ps1   # valida a unidade no formato que o OPL espera
 ├── tests/
 │   ├── Test-UlFormat.ps1      # 17 asserções do formato
 │   ├── Test-GuiWorker.ps1     # 20 asserções do worker da GUI
-│   └── Test-GuiUi.ps1         # 187 asserções clicando em todo controle
+│   └── Test-GuiUi.ps1         # 231 asserções clicando em todo controle
 ├── docs/
 │   ├── TUTORIAL.md            # passo a passo do zero (pendrive + FMCB + OPL)
 │   ├── UL-FORMAT.md           # especificação do formato ul.* / ul.cfg
 │   ├── CASE-STUDY.md          # diagnóstico de um pendrive real de 64 GB
 │   ├── screenshot.png         # captura da interface (aba OPL)
-│   └── screenshot-biblioteca.png  # captura da biblioteca (instalado x para instalar)
+│   ├── screenshot-biblioteca.png  # captura da biblioteca (instalado x para instalar)
+│   └── screenshot-glossario.png   # captura do glossário (formatos, colunas, status)
 ├── CHANGELOG.md
 └── LICENSE
 ```
