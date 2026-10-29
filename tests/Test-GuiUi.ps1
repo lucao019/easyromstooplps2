@@ -410,6 +410,7 @@ try {
     Write-Host ''
     Write-Host '11. RECARREGAR, COPIAR e botões da janela' -ForegroundColor Cyan
 
+    Assert-Equal $letter $S.Drive 'a unidade escolhida não muda sozinha'
     Click $ui.BtnRefresh 'BtnRefresh'
     Assert-Equal 1 $S.Games.Count 'RECARREGAR mantém a lista'
     Assert-True ((Get-LogText) -match 'recarregada') 'RECARREGAR registra no log'
@@ -432,9 +433,35 @@ try {
     $win.WindowState = 'Normal'
     Pump 100
 
-    # ============================================================ 12. nenhum erro de handler
+    # ============================================================ 12. hot-plug
     Write-Host ''
-    Write-Host '12. Nenhum handler lançou exceção' -ForegroundColor Cyan
+    Write-Host '12. Pendrive conectado/removido com o app aberto' -ForegroundColor Cyan
+
+    $plugLetter = if (Test-Path 'Y:\') { 'Z' } else { 'Y' }
+    $plugDir = Join-Path ([IO.Path]::GetTempPath()) ('er2opl-plug-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    New-Item -ItemType Directory -Force $plugDir | Out-Null
+
+    & cmd /c subst "${plugLetter}:" "$plugDir" | Out-Null
+    Pump 1800
+    $plugChip = $ui.DrivesPanel.Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] -and [string]$_.Tag -eq $plugLetter }
+    Assert-True ($null -ne $plugChip) "unidade ${plugLetter}: apareceu sozinha"
+    Assert-True ((Get-LogText) -match "conectada: $plugLetter") 'log registrou a conexão'
+
+    Click $plugChip "chip-$plugLetter"
+    Assert-Equal $plugLetter $S.Drive "unidade ${plugLetter}: selecionada"
+
+    & cmd /c subst "${plugLetter}:" /d | Out-Null
+    Pump 1800
+    $plugChip = $ui.DrivesPanel.Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] -and [string]$_.Tag -eq $plugLetter }
+    Assert-True ($null -eq $plugChip) "unidade ${plugLetter}: sumiu sozinha"
+    Assert-True ($S.Drive -ne $plugLetter) 'seleção mudou ao remover a unidade'
+    Assert-True ((Get-LogText) -match "removida: $plugLetter") 'log registrou a remoção'
+    Assert-True ($ui.Toasts.Children.Count -gt 0) 'avisou que o pendrive saiu'
+    Remove-Item $plugDir -Recurse -Force -ErrorAction SilentlyContinue
+
+    # ============================================================ 13. nenhum erro de handler
+    Write-Host ''
+    Write-Host '13. Nenhum handler lançou exceção' -ForegroundColor Cyan
 
     if ($script:UiErrors.Count -gt 0) {
         foreach ($ex in $script:UiErrors) {
@@ -447,7 +474,7 @@ try {
 
     # ============================================================ 13. cobertura
     Write-Host ''
-    Write-Host '13. Cobertura dos controles' -ForegroundColor Cyan
+    Write-Host '14. Cobertura dos controles' -ForegroundColor Cyan
 
     $all = New-Object System.Collections.ArrayList
     function Walk {

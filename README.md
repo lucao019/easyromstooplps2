@@ -6,7 +6,7 @@
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 ![PS2](https://img.shields.io/badge/PlayStation%202-OPL%20USB-003791?logo=playstation&logoColor=white)
 ![GUI](https://img.shields.io/badge/interface-WPF%20nativa-8BE9FD)
-![Testes](https://img.shields.io/badge/testes-129%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-137%20passando-brightgreen)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-green)
 
 **Interface gráfica** (arrastar e soltar) e **CLI** — as duas usando o mesmo motor.
@@ -29,6 +29,9 @@ Sem instalação, sem Electron, sem runtime extra: é WPF nativo do Windows.
 - Botão **ISO** remonta os pedaços de um jogo em `.iso` único (para PCSX2 ou backup).
 - Botão **✕** remove um jogo (pedaços + entrada do `ul.cfg`), com confirmação.
 - Unidades fixas aparecem marcadas com `HD` — o padrão é sempre o pendrive removível.
+- **Pendrive em tempo real:** conecte ou remova com o programa aberto — a unidade
+  aparece/some sozinha em até 1 s, sem precisar clicar em RECARREGAR. Se o pendrive
+  selecionado sair, o app avisa e escolhe outro automaticamente.
 
 O visual segue os tokens do `terminal.css` (a biblioteca de componentes usada como
 referência): fundo `#050505`, ciano `#8BE9FD`, JetBrains Mono com fallback para
@@ -254,7 +257,7 @@ separado (`gui/Worker.ps1`) para não travar a janela.
 # 20 asserções do worker da GUI: instala, exporta, cancela
 .\tests\Test-GuiWorker.ps1
 
-# 92 asserções da interface: clica em todo controle, instala e remove de verdade
+# 100 asserções da interface: clica em todo controle, instala e remove de verdade
 .\tests\Test-GuiUi.ps1
 ```
 
@@ -278,7 +281,8 @@ unidade, modos, INSTALAR, SIMULAR, LIMPAR LISTA, RECARREGAR, COPIAR, ✕ dos arq
 ✕ dos jogos (cancelar / ESC / confirmar), ISO (exportar), minimizar / maximizar / fechar —
 e ainda faz uma varredura que clica no que sobrou. Ele usa uma unidade virtual (`subst`)
 para nunca gravar em disco real, e falha se qualquer handler lançar exceção. Foi esse
-teste que encontrou o bug do clique que fechava o programa.
+teste que encontrou o bug do clique que fechava o programa. Ele também simula um pendrive
+entrando e saindo (`subst`) e confere que a unidade aparece/some sozinha.
 
 ```powershell
 # discos com erro de I/O conhecido podem ser pulados
@@ -308,7 +312,7 @@ easyromstooplps2/
 ├── tests/
 │   ├── Test-UlFormat.ps1      # 17 asserções do formato
 │   ├── Test-GuiWorker.ps1     # 20 asserções do worker da GUI
-│   └── Test-GuiUi.ps1         # 92 asserções clicando em todo controle
+│   └── Test-GuiUi.ps1         # 100 asserções clicando em todo controle
 ├── docs/
 │   ├── TUTORIAL.md            # passo a passo do zero (pendrive + FMCB + OPL)
 │   ├── UL-FORMAT.md           # especificação do formato ul.* / ul.cfg

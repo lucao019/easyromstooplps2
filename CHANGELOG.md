@@ -4,6 +4,27 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.3.0] — 2026-10-28
+
+### Adicionado
+
+- **Pendrive em tempo real (hot-plug).** Com o programa aberto, conecte ou remova
+  o pendrive: a unidade aparece/some sozinha em até 1 segundo, sem clicar em
+  RECARREGAR. Se a unidade selecionada sair, o app avisa (aviso + log + barra de
+  status) e escolhe outra automaticamente; se não sobrar nenhuma, mostra
+  `NENHUM PENDRIVE DETECTADO`.
+  - A checagem é barata: compara só a lista de letras das unidades a cada segundo
+    (sem ler rótulo/espaço, que podem travar em pendrive com defeito). A leitura
+    completa só acontece quando algo realmente muda.
+  - Durante uma cópia a lista não é mexida (o worker continua mandando no progresso).
+- Teste novo no `Test-GuiUi.ps1`: simula um pendrive entrando e saindo com o app
+  aberto (`subst`) e confere chip, log, seleção e aviso (100 asserções no total).
+
+### Corrigido
+
+- Uma leitura momentaneamente falha da unidade não troca mais a unidade
+  selecionada: a seleção só muda se a letra realmente desaparecer do sistema.
+
 ## [1.2.1] — 2026-10-28
 
 ### Corrigido
@@ -118,6 +139,7 @@ um PS2 com FreeMcBoot/OPL — ver [docs/CASE-STUDY.md](docs/CASE-STUDY.md).
   Medalha de Honra, ULTIMO BOMBA, God of War e Crash Twinsanity).
 - God of War (DVD9, 7,94 GB) instalado em 8 pedaços; soma conferida byte a byte.
 
+[1.3.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/lucao019/easyromstooplps2/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/lucao019/easyromstooplps2/compare/v1.0.0...v1.1.0

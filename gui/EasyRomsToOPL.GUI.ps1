@@ -76,6 +76,8 @@ $S = @{
     Handle     = $null
     Confirm    = $null
     Toasts     = New-Object System.Collections.ArrayList
+    DriveProbe = @()            # ultima lista de unidades vista (hot-plug)
+    DriveTimer = $null
 }
 
 $BRUSH = @{}
@@ -263,7 +265,18 @@ function Update-DriveChips {
         return
     }
 
-    if (-not $S.Drive -or -not ($S.Drives | Where-Object { $_.Letter -eq $S.Drive })) {
+    # A letra ainda existe no sistema? (não exige estar "pronta": um pendrive
+    # ocupado pode falhar na leitura por um instante e não deve perder a seleção)
+    $stillThere = $false
+    if ($S.Drive) {
+        try {
+            foreach ($d in [IO.DriveInfo]::GetDrives()) {
+                if ($d.Name.Substring(0, 1) -eq $S.Drive) { $stillThere = $true; break }
+            }
+        } catch { }
+    }
+
+    if (-not $S.Drive -or -not $stillThere) {
         $preferred = $S.Drives | Where-Object { $_.Type -eq 'Removable' -and $_.Format -eq 'FAT32' } | Select-Object -First 1
         if (-not $preferred) { $preferred = $S.Drives | Where-Object { $_.Type -eq 'Removable' } | Select-Object -First 1 }
         if (-not $preferred) { $preferred = $S.Drives[0] }
@@ -288,6 +301,68 @@ function Update-DriveChips {
     }
 }
 
+function Get-DriveProbe {
+    <#
+        Lista "letra|tipo" de cada unidade, SEM tocar no disco: IsReady/VolumeLabel
+        podem travar em pendrive com defeito. Serve só para saber se mudou algo.
+    #>
+    $probe = New-Object System.Collections.ArrayList
+    try {
+        foreach ($d in [IO.DriveInfo]::GetDrives()) {
+            try {
+                if ($d.DriveType -ne 'Removable' -and $d.DriveType -ne 'Fixed') { continue }
+                $letter = $d.Name.Substring(0, 1)
+                if ($letter -eq $env:SystemDrive.Substring(0, 1)) { continue }
+                [void]$probe.Add(('{0}|{1}' -f $letter, $d.DriveType))
+            } catch { }
+        }
+    } catch { }
+    return @($probe | Sort-Object)
+}
+
+function Sync-Drives {
+    <#
+        Chamado a cada segundo pelo timer. Compara só a lista de unidades:
+        se nada entrou/saiu, não faz nada (barato). Quando muda, reconstrói os
+        chips e recarrega os jogos — é isso que faz o pendrive aparecer/sumir
+        em tempo real com o app aberto.
+    #>
+    if (-not $win.IsVisible) { return }
+    if ($S.Busy) { return }   # não mexe na lista no meio de uma cópia
+
+    $now = @(Get-DriveProbe)
+    if (($now -join ';') -eq (@($S.DriveProbe) -join ';')) { return }
+    $S.DriveProbe = $now
+
+    $before = @($S.Drives | ForEach-Object { $_.Letter })
+    $selected = $S.Drive
+
+    Update-DriveChips
+    Load-Games
+    Update-Space
+
+    $after = @($S.Drives | ForEach-Object { $_.Letter })
+    $added = @($after | Where-Object { $before -notcontains $_ })
+    $removed = @($before | Where-Object { $after -notcontains $_ })
+
+    foreach ($l in $added) { Add-Log ("Unidade conectada: {0}:" -f $l) 'ok' }
+    foreach ($l in $removed) { Add-Log ("Unidade removida: {0}:" -f $l) 'warn' }
+
+    if ($removed -contains $selected) {
+        if ($S.Drive) {
+            Show-Toast 'Pendrive removido' ("{0}: saiu. Selecionado agora: {1}:" -f $selected, $S.Drive) 'warn'
+            Set-Status ("PENDRIVE TROCADO · {0}:" -f $S.Drive) '#F1FA8C'
+        } else {
+            Show-Toast 'Pendrive removido' ("{0}: não está mais conectado." -f $selected) 'error'
+            Set-Status 'SEM PENDRIVE' '#FF5555'
+        }
+    } elseif ($added.Count -gt 0) {
+        $first = $S.Drives | Where-Object { $_.Letter -eq $added[0] } | Select-Object -First 1
+        $label = if ($first -and $first.Label) { ' — ' + $first.Label } else { '' }
+        Show-Toast 'Pendrive conectado' ("{0}:{1}" -f $added[0], $label) 'ok'
+        if ($S.Drive) { Set-Status ("PRONTO · {0}:" -f $S.Drive) '#50FA7B' }
+    }
+}
 function Update-Space {
     $ui.StatGames.Text = ('{0} JOGO(S)' -f $S.Games.Count).ToUpper()
     if (-not $S.Drive) {
@@ -1059,6 +1134,20 @@ if (-not $S.Drive) {
     Show-Toast 'Nenhum pendrive' 'Conecte um pendrive FAT32 para começar.' 'warn'
 } else {
     Set-Status ("PRONTO · {0}:" -f $S.Drive) '#50FA7B'
+}
+
+# ---------------------------------------------------------------- hot-plug
+# Um timer de 1 s compara só a lista de letras (barato). Se um pendrive
+# entrar ou sair, os chips e a lista de jogos são atualizados na hora.
+if (-not $env:EASYROMS_SNAPSHOT) {
+    $S.DriveProbe = @(Get-DriveProbe)
+    $S.DriveTimer = New-Object Windows.Threading.DispatcherTimer
+    $S.DriveTimer.Interval = [TimeSpan]::FromSeconds(1)
+    $S.DriveTimer.Add_Tick({ Sync-Drives })
+    $S.DriveTimer.Start()
+    $win.Add_Closed({
+        if ($S.DriveTimer) { $S.DriveTimer.Stop(); $S.DriveTimer = $null }
+    })
 }
 
 # Modo de captura: usado para gerar o screenshot da documentação.
