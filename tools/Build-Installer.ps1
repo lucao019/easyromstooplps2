@@ -23,7 +23,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $repo = Split-Path -Parent $PSScriptRoot
 if (-not $OutFile) { $OutFile = Join-Path $repo 'dist\Instalar-EasyRomsToOPL.cmd' }
 
-$version = '1.2.0'
+$version = '1.8.0'
 $changelog = Join-Path $repo 'CHANGELOG.md'
 if (Test-Path -LiteralPath $changelog) {
     $m = [regex]::Match((Get-Content -LiteralPath $changelog -Raw -Encoding UTF8), '##\s*\[(\d+\.\d+\.\d+)\]')

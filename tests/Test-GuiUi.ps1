@@ -538,10 +538,26 @@ try {
     [IO.File]::WriteAllBytes((Join-Path $roms 'PS1\Crash (SLUS_005.94).bin'), (New-Object byte[] 8192))
     [IO.File]::WriteAllBytes((Join-Path $roms 'PS1\Crash (SLUS_005.94).cue'), [Text.Encoding]::ASCII.GetBytes('FILE "Crash (SLUS_005.94).bin" BINARY'))
     [IO.File]::WriteAllBytes((Join-Path $roms 'SNES\Super Mario World.sfc'), (New-Object byte[] 8192))
-    [IO.File]::WriteAllBytes((Join-Path $roms 'N64\Zelda.z64'), (New-Object byte[] (128 * 1024)))
-    [IO.File]::WriteAllBytes((Join-Path $roms 'GBA\Pokemon.gba'), (New-Object byte[] (32 * 1024)))
-    [IO.File]::WriteAllBytes((Join-Path $roms 'NDS\Kirby.nds'), (New-Object byte[] (128 * 1024)))
-    [IO.File]::WriteAllBytes((Join-Path $roms 'GC\Sunshine.gcm'), (New-Object byte[] (512 * 1024)))
+    # ROMs de verdade: cada formato tem uma assinatura que a biblioteca confere
+    # (ver $script:GameSignature em lib/GameLibrary.ps1). Arquivo de zeros puro
+    # é rejeitado de propósito — um .gba renomeado não pode contar como jogo.
+    $z64 = New-Object byte[] (128 * 1024)
+    $n64sig = [byte[]](0x80, 0x37, 0x12, 0x40)
+    $n64sig.CopyTo($z64, 0x00)
+    [IO.File]::WriteAllBytes((Join-Path $roms 'N64\Zelda.z64'), $z64)
+    # GBA e NDS compartilham o logo da Nintendo; muda só o offset.
+    $logo = [byte[]](0x24, 0xFF, 0xAE, 0x51, 0x69, 0x9A, 0xA2, 0x21)
+    $gba = New-Object byte[] (32 * 1024)
+    $logo.CopyTo($gba, 0x04)
+    [IO.File]::WriteAllBytes((Join-Path $roms 'GBA\Pokemon.gba'), $gba)
+    $nds = New-Object byte[] (128 * 1024)
+    $logo.CopyTo($nds, 0x0C)
+    [IO.File]::WriteAllBytes((Join-Path $roms 'NDS\Kirby.nds'), $nds)
+    # GameCube: magic do disco no offset 0x1C.
+    $gcm = New-Object byte[] (512 * 1024)
+    $gcmSig = [byte[]](0xC2, 0x33, 0x9F, 0x3D)
+    $gcmSig.CopyTo($gcm, 0x1C)
+    [IO.File]::WriteAllBytes((Join-Path $roms 'GC\Sunshine.gcm'), $gcm)
     [IO.File]::WriteAllBytes((Join-Path $roms 'lixo.txt'), (New-Object byte[] 8192))
 
     # Falsos positivos que o usuário viu: README.md (Markdown) com extensão de

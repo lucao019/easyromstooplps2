@@ -155,7 +155,13 @@ function Format-IgdbGame {
     }
 
     if ($Row.rating) {
-        try { $info.Nota = ('{0:N1}/100' -f [double]$Row.rating) } catch { }
+        # A IGDB devolve `rating` na escala 0-100. A ficha (e o catálogo local)
+        # usam 0-10, então normalizamos para não exibir "9.5/100" ao usuário.
+        try {
+            $nota = [double]$Row.rating
+            if ($nota -gt 10) { $nota = $nota / 10 }
+            $info.Nota = ('{0:N1}/10' -f $nota)
+        } catch { }
     }
 
     if ($Row.platforms) {
