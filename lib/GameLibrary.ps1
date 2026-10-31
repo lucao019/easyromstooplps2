@@ -188,6 +188,75 @@ function Test-MegaDriveRom {
     return ([Text.Encoding]::ASCII.GetString($b, 0x100, 4) -eq 'SEGA')
 }
 
+# Assinaturas ("magic") dos formatos que têm cabeçalho fixo. Cada entrada é
+# { Offset, Bytes }: o arquivo só passa se tiver exatamente esses bytes naquele
+# offset. É o que separa uma ROM de verdade de um arquivo qualquer com a
+# extensão certa (um .exe renomeado .gba, um .zip renomeado .nes…).
+$script:GameSignature = @{
+    '.nes' = @{ Offset = 0; Bytes = [byte[]](0x4E, 0x45, 0x53, 0x1A) }            # "NES\x1A"
+    '.fds' = @{ Offset = 0; Bytes = [byte[]](0x46, 0x44, 0x53, 0x1A) }            # "FDS\x1A"
+    '.pbp' = @{ Offset = 0; Bytes = [byte[]](0x00, 0x50, 0x42, 0x50) }            # "\0PBP"
+    '.cso' = @{ Offset = 0; Bytes = [byte[]](0x43, 0x49, 0x53, 0x4F) }            # "CISO"
+    '.wbfs' = @{ Offset = 0; Bytes = [byte[]](0x57, 0x42, 0x46, 0x53) }           # "WBFS"
+    '.rvz' = @{ Offset = 0; Bytes = [byte[]](0x52, 0x56, 0x5A, 0x01) }            # "RVZ\x01"
+    '.chd' = @{ Offset = 0; Bytes = [byte[]](0x4D, 0x43, 0x6F, 0x6D, 0x70, 0x72) } # "MCompr"
+    '.gcm' = @{ Offset = 0x1C; Bytes = [byte[]](0xC2, 0x33, 0x9F, 0x3D) }         # GameCube disc
+    # Nintendo logo, presente em GB/GBC (0x104) e GBA/NDS (0x04).
+    '.gb' = @{ Offset = 0x104; Bytes = [byte[]](0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B) }
+    '.gbc' = @{ Offset = 0x104; Bytes = [byte[]](0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B) }
+    '.gba' = @{ Offset = 0x04; Bytes = [byte[]](0x24, 0xFF, 0xAE, 0x51, 0x69, 0x9A, 0xA2, 0x21) }
+    '.nds' = @{ Offset = 0x0C; Bytes = [byte[]](0x24, 0xFF, 0xAE, 0x51, 0x69, 0x9A, 0xA2, 0x21) }
+    # N64 existe em três ordens de byte; qualquer uma serve.
+    '.z64' = @{ Offset = 0; Bytes = [byte[]](0x80, 0x37, 0x12, 0x40) }
+    '.v64' = @{ Offset = 0; Bytes = [byte[]](0x37, 0x80, 0x40, 0x12) }
+    '.n64' = @{ Offset = 0; Bytes = [byte[]](0x40, 0x12, 0x37, 0x80) }
+}
+
+function Test-GameSignature {
+    <#
+        Confere a assinatura do formato. Formatos sem cabeçalho confiável
+        (.sfc/.smc, .cdi, .gdi…) não estão na tabela e passam direto: para
+        esses, tamanho + teste de texto continuam valendo.
+    #>
+    param([IO.FileInfo]$File, [string]$Ext)
+
+    if (-not $script:GameSignature.ContainsKey($Ext)) { return $true }
+
+    $sig = $script:GameSignature[$Ext]
+    $need = [int]$sig.Offset + $sig.Bytes.Length
+    $head = Get-GameFileHead $File.FullName $need
+    if ($head.Length -lt $need) { return $false }
+
+    for ($i = 0; $i -lt $sig.Bytes.Length; $i++) {
+        if ($head[$sig.Offset + $i] -ne $sig.Bytes[$i]) { return $false }
+    }
+    return $true
+}
+
+function Get-ChdPlatform {
+    <#
+        CHD pode ser CD (PS1) ou DVD (PS2). O cabeçalho guarda o tamanho
+        lógico do disco original; CD fica em ~700 MB, DVD passa de 1 GB.
+        Sem ler isso, todo CHD de PS2 virava "PS1" — e CHD de PS2 não roda
+        no OPL sem converter para ISO.
+    #>
+    param([string]$Path)
+
+    $head = Get-GameFileHead $Path 0x24
+    if ($head.Length -lt 0x20) { return 'PS1' }
+
+    # versão no offset 0x0C (uint32 big-endian)
+    $ver = ([int]$head[0x0C] -shl 24) -bor ([int]$head[0x0D] -shl 16) -bor ([int]$head[0x0E] -shl 8) -bor [int]$head[0x0F]
+    $off = if ($ver -ge 5) { 0x18 } else { 0x1C }
+    if ($head.Length -lt ($off + 8)) { return 'PS1' }
+
+    $logical = [int64]0
+    for ($i = 0; $i -lt 8; $i++) { $logical = ($logical -shl 8) -bor [int64]$head[$off + $i] }
+
+    if ($logical -gt 1073741824) { return 'PS2' }   # > 1 GB: disco de DVD
+    return 'PS1'
+}
+
 function Test-GameFile {
     <#
         Confere se o arquivo realmente pode ser um jogo, e não só um arquivo
@@ -200,6 +269,10 @@ function Test-GameFile {
     if ($File.Length -lt $min) { return $false }
 
     if ($script:TextExt -contains $Ext) { return $true }
+
+    # Cabeçalho fixo conhecido: é a prova mais forte. Se a assinatura não bate,
+    # não é esse formato — nada de arquivo renomeado entrando na lista.
+    if (-not (Test-GameSignature -File $File -Ext $Ext)) { return $false }
 
     # O ISO não passa por esse teste: o setor de sistema pode vir preenchido
     # com um byte repetido (0x6D, 0xED…) e parecer "texto". Para .iso quem
@@ -486,6 +559,8 @@ function Get-GameLibrary {
                     elseif ($folderName -match '(?i)gamecube|wii') { $platform = 'GC' }
                     elseif ($serial) { $platform = 'PS1' }
                 }
+            } elseif ($ext -eq '.chd') {
+                $platform = Get-ChdPlatform $f
             }
 
             [void]$found.Add([pscustomobject]@{
