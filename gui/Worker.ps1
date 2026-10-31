@@ -54,6 +54,31 @@ $script:WorkerScript = {
                         -OnLog $onLog -OnProgress $onProgress -State $Sync
                     [void]$Sync.Log.Add("ok|ISO gerado: $($r.Destino) ($([Math]::Round($r.Bytes / 1GB, 2)) GB)")
                 }
+                elseif ($job.Op -eq 'copy-ul') {
+                    [void]$Sync.Log.Add("info|COPIANDO: $($job.Name) -> unidade $($job.DestLetter):")
+                    $r = Copy-UlGame -SourceRoot $job.SourceRoot -DestRoot $job.DestRoot -Serial $job.Serial `
+                        -OnLog $onLog -OnProgress $onProgress -State $Sync
+                    [void]$Sync.Log.Add("ok|$($job.Name) copiado para $($job.DestLetter):")
+                }
+                elseif ($job.Op -eq 'move-ul') {
+                    [void]$Sync.Log.Add("info|MOVENDO: $($job.Name) -> unidade $($job.DestLetter):")
+                    $r = Move-UlGame -SourceRoot $job.SourceRoot -DestRoot $job.DestRoot -Serial $job.Serial `
+                        -OnLog $onLog -OnProgress $onProgress -State $Sync
+                    [void]$Sync.Log.Add("ok|$($job.Name) movido para $($job.DestLetter):")
+                }
+                elseif ($job.Op -eq 'copy-dvd') {
+                    [void]$Sync.Log.Add("info|COPIANDO ISO: $($job.Name) -> unidade $($job.DestLetter):")
+                    $r = Copy-DvdGame -IsoPath $job.Iso -DestRoot $job.DestRoot `
+                        -OnLog $onLog -OnProgress $onProgress -State $Sync
+                    [void]$Sync.Log.Add("ok|$($job.Name).iso copiado para $($job.DestLetter):")
+                }
+                elseif ($job.Op -eq 'move-dvd') {
+                    [void]$Sync.Log.Add("info|MOVENDO ISO: $($job.Name) -> unidade $($job.DestLetter):")
+                    $r = Copy-DvdGame -IsoPath $job.Iso -DestRoot $job.DestRoot `
+                        -OnLog $onLog -OnProgress $onProgress -State $Sync
+                    Remove-Item -LiteralPath $job.Iso -Force
+                    [void]$Sync.Log.Add("ok|$($job.Name).iso movido para $($job.DestLetter):")
+                }
                 elseif ($job.Mode -eq 'dvd') {
                     [void]$Sync.Log.Add("info|COPIANDO PARA DVD\: $($job.Name)")
                     $r = Install-DvdFolderGame -IsoPath $job.Iso -Root $job.Root -Name $job.Name `

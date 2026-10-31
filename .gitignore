@@ -33,3 +33,7 @@ $RECYCLE.BIN/
 
 # PowerShell
 *.tmp
+
+# Ficha do jogo — cache e credenciais ficam locais
+data/games.cache.json
+data/igdb.json

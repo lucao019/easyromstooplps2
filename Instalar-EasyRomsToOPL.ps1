@@ -169,7 +169,7 @@ if (Test-Path -LiteralPath $Target) {
 
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
 
-$items = @('EasyRomsToOPL.ps1', 'EasyRomsToOPL.cmd', 'Instalar-EasyRomsToOPL.ps1', 'lib', 'gui', 'docs', 'README.md', 'CHANGELOG.md', 'LICENSE')
+$items = @('EasyRomsToOPL.ps1', 'EasyRomsToOPL.cmd', 'EasyRomsToOPL-Launcher.ps1', 'EasyRomsToOPL-Launcher.vbs', 'EasyRomsToOPL-Launcher.cmd', 'Instalar-EasyRomsToOPL.ps1', 'lib', 'gui', 'data', 'docs', 'README.md', 'CHANGELOG.md', 'LICENSE')
 foreach ($item in $items) {
     $from = Join-Path $Source $item
     if (-not (Test-Path -LiteralPath $from)) { continue }
@@ -205,8 +205,18 @@ function New-AppShortcut {
     }
 
     $lnk = $shell.CreateShortcut($Path)
-    $lnk.TargetPath = $powershellExe
-    $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$guiScript`""
+    
+    # Usar o launcher se existir (melhor ocultação de console)
+    $launcherScript = Join-Path $Target 'EasyRomsToOPL-Launcher.ps1'
+    if (Test-Path -LiteralPath $launcherScript) {
+        $lnk.TargetPath = $powershellExe
+        $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherScript`""
+    } else {
+        # Fallback para o método antigo
+        $lnk.TargetPath = $powershellExe
+        $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$guiScript`""
+    }
+    
     $lnk.WorkingDirectory = $Target
     $lnk.IconLocation = $iconPath
     $lnk.Description = 'EasyRomsToOPL - jogos de PS2 no pendrive do OPL'

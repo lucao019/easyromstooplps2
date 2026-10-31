@@ -384,13 +384,16 @@ try {
     Write-Host '9. ✕ no jogo: cancelar, ESC e confirmar' -ForegroundColor Cyan
 
     function Get-GameButton {
-        param([string]$Content)
+        param([string]$Content, [string]$Nome)
         foreach ($row in $ui.GamesPanel.Children) {
             if ($row.Child -isnot [Windows.Controls.Grid]) { continue }
             foreach ($child in $row.Child.Children) {
                 if ($child -is [Windows.Controls.StackPanel]) {
                     $btn = $child.Children | Where-Object { $_ -is [Windows.Controls.Button] -and "$($_.Content)" -eq $Content } | Select-Object -First 1
-                    if ($btn) { return $btn }
+                    if ($btn) {
+                        if ($Nome -and "$($btn.Tag.Nome)" -ne $Nome) { continue }
+                        return $btn
+                    }
                 }
             }
         }
@@ -647,6 +650,59 @@ try {
     $snesButtons = if ($snesRow) { @($snesRow.Child.Children | Where-Object { $_ -is [Windows.Controls.Button] }).Count } else { -1 }
     Assert-Equal 0 $snesButtons 'SNES não tem botão de instalar'
 
+    # ---- seleção em lote: cada linha que pode instalar tem caixa de seleção
+    $novoRow = $ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.File -eq $ps2Novo } | Select-Object -First 1
+    $chk = $novoRow.Child.Children | Where-Object { $_ -is [Windows.Controls.CheckBox] } | Select-Object -First 1
+    Assert-True ($null -ne $chk) 'jogo instalável tem caixa de seleção'
+    Assert-Equal 'Collapsed' ([string]$ui.BtnInstallSelected.Visibility) 'botão de lote começa escondido'
+    Assert-Equal 0 $S.LibSel.Count 'nada selecionado no começo'
+
+    $chk.IsChecked = $true
+    $chk.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+    Pump 60
+    Assert-Equal 1 $S.LibSel.Count 'marcou 1 jogo para instalar'
+    Assert-Equal 'Visible' ([string]$ui.BtnInstallSelected.Visibility) 'botão de lote aparece'
+    Assert-True ([string]$ui.BtnInstallSelected.Content -match '1 SELECIONADO') 'botão mostra a contagem'
+    Assert-True ([string]$ui.LibraryInfo.Text -match 'SELECIONADO') 'cabeçalho mostra a seleção'
+
+    $chk.IsChecked = $false
+    $chk.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+    Pump 60
+    Assert-Equal 0 $S.LibSel.Count 'desmarcar limpa a seleção'
+    Assert-Equal 'Collapsed' ([string]$ui.BtnInstallSelected.Visibility) 'botão de lote some de novo'
+
+    # ---- não oferece caixa para o que não instala (cópia já no OPL)
+    $copyRow = $ui.LibraryPanel.Children | Where-Object { $_.Tag -and $_.Tag.File -eq $ps2Iso } | Select-Object -First 1
+    $copyChk = $copyRow.Child.Children | Where-Object { $_ -is [Windows.Controls.CheckBox] } | Select-Object -First 1
+    Assert-True ($null -eq $copyChk) 'jogo já instalado não tem caixa de seleção'
+
+    # ---- instalar em lote: marca e instala de uma vez
+    $S.Files.Clear()
+    Render-Files
+    $chk.IsChecked = $true
+    $chk.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+    Pump 60
+    Assert-Equal 1 $S.LibSel.Count 'jogo marcado para lote'
+    Click $ui.BtnInstallSelected 'INSTALAR SELECIONADOS'
+    Wait-Idle
+    Assert-True ($S.Busy -or $ui.Bar.Value -ge 0) 'lote disparou a instalação'
+    Assert-True (@($S.Games | Where-Object { $_.Serial -eq 'SLUS_215.96' }).Count -ge 1) 'o lote instalou o jogo escolhido'
+    Assert-Equal 0 $S.LibSel.Count 'seleção é limpa ao recarregar a biblioteca'
+
+    # Desfaz a instalação do lote: sem isso o serial SLUS_215.96 fica no pendrive
+    # e a seção 13c acharia o jogo de dentro do ZIP já instalado.
+    Click $ui.TabOpl 'TabOpl'
+    Pump 120
+    $batchEntry = $S.Games | Where-Object { $_.Serial -eq 'SLUS_215.96' } | Select-Object -First 1
+    $batchGame = if ($batchEntry) { Get-GameButton '✕' $batchEntry.Nome } else { $null }
+    if ($batchGame) {
+        Click $batchGame 'game-remove (lote)'
+        Click $ui.BtnYesConfirm 'BtnYesConfirm (lote)'
+        Wait-Idle
+        Pump 400
+        Assert-Equal 0 @($S.Games | Where-Object { $_.Serial -eq 'SLUS_215.96' }).Count 'drive limpo de volta para a 13b/13c'
+    }
+
     Click $ui.TabOpl 'TabOpl'
     Pump 200
     Assert-Equal 'Visible' ([string]$ui.OplView.Visibility) 'voltou para a aba OPL'
@@ -731,8 +787,15 @@ try {
     }
 
     $sevenOnDrive = Join-Path $archDir 'Jogo Bib.7z'
-    & tar.exe -cf $sevenOnDrive --format 7zip -C $bibSrc 'Jogo Bib (SLUS_215.96).iso' 2>$null
-    $has7z = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $sevenOnDrive)
+    # tar do macOS/Linux (bsdtar) pode não suportar --format 7zip; sem o guard o
+    # erro nativo derruba a suíte inteira ($ErrorActionPreference = 'Stop').
+    $has7z = $false
+    try {
+        & tar.exe -cf $sevenOnDrive --format 7zip -C $bibSrc 'Jogo Bib (SLUS_215.96).iso' 2>$null
+        $has7z = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $sevenOnDrive)
+    } catch {
+        $has7z = $false
+    }
 
     Refresh-Library
     $deadline = (Get-Date).AddSeconds(40)

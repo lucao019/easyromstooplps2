@@ -606,7 +606,11 @@ function Get-GameLibrary {
             }
             if (-not $inner) { continue }   # compactado sem jogo: não polui a lista
         } else {
-            $innerPlatform = 'ARQ'
+            # Não consegui abrir o índice. Um .rar/.7z/.zip que o app não lê
+            # (llama.cpp, driver, instalador…) não é jogo e some da lista: só
+            # entra o que dá para conferir que tem jogo dentro. Se o jogo
+            # estiver mesmo lá, o próprio app avisa ao tentar instalar.
+            continue
         }
 
         $serial = $null
@@ -614,11 +618,7 @@ function Get-GameLibrary {
         if (-not $serial) { $serial = Get-GameSerialFromName $afi.BaseName }
 
         $rel = $afi.FullName.Substring($rootFull.Length)
-        if ($list.Ok) {
-            $rel = ('{0} · {1} jogo(s) dentro · {2}' -f $rel, $innerCount, $inner)
-        } else {
-            $rel = ('{0} · NÃO CONSEGUI LER O CONTEÚDO' -f $rel)
-        }
+        $rel = ('{0} · {1} jogo(s) dentro · {2}' -f $rel, $innerCount, $inner)
 
         [void]$found.Add([pscustomobject]@{
             # "Jogo.part1" é só o primeiro pedaço: no menu vale "Jogo".

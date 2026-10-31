@@ -555,3 +555,210 @@ function Export-UlToIso {
     if ($OnProgress) { & $OnProgress 100 $total $total }
     return [pscustomobject]@{ Nome = $entry.Nome; Destino = $Destination; Bytes = $total }
 }
+
+function Rename-UlGame {
+    <#
+        Renomeia um jogo no formato ul.*.
+
+        O CRC faz parte do nome dos pedaços (ul.<CRC>.<SERIAL>.<NN>), então mudar o
+        nome exige RENOMEAR cada pedaço e reescrever a entrada no ul.cfg. Fazemos os
+        dois de forma atômica: qualquer falha no meio reverte os pedaços já renomeados.
+
+        Devolve um objeto com o nome antigo, o novo e quantos pedaços mudaram.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Serial,
+        [Parameter(Mandatory)][string]$NewName
+    )
+
+    $NewName = (ConvertTo-AsciiName $NewName).Trim()
+    if (-not $NewName) { throw 'O nome não pode ficar vazio.' }
+    if ($NewName.Length -gt 32) { $NewName = $NewName.Substring(0, 32) }
+
+    $entry = @(Read-UlEntries $Root) | Where-Object { $_.Serial -eq $Serial } | Select-Object -First 1
+    if (-not $entry) { throw "Serial $Serial não encontrado no ul.cfg." }
+    if ($entry.Nome -eq $NewName) { throw 'O novo nome é igual ao atual.' }
+
+    $oldCrc = $entry.Crc
+    $newCrc = '{0:X8}' -f (Get-UsbaCrc32 $NewName)
+    if ($oldCrc -eq $newCrc) { throw 'O novo nome gera o mesmo CRC; escolha outro nome.' }
+
+    $media = if ($entry.Media -eq 'DVD') { [byte]0x14 } elseif ($entry.Media -eq 'CD') { [byte]0x12 } else { [byte]0x14 }
+    $parts = [int]$entry.Partes
+
+    $oldParts = @(Get-ChildItem $Root -Filter "ul.$oldCrc.$Serial.*" -File -ErrorAction SilentlyContinue |
+        Sort-Object Name)
+    if ($oldParts.Count -eq 0) { throw "Não encontrei os pedaços de $($entry.Nome) ($oldCrc)." }
+    if ($oldParts.Count -ne $parts) {
+        Write-Warning "ul.cfg diz $parts pedaço(s) mas existem $($oldParts.Count); usando o número real."
+        $parts = $oldParts.Count
+    }
+
+    # Renomeia pedaço a pedaço guardando o mapa para poder reverter.
+    $renamed = New-Object 'System.Collections.Generic.List[object]'
+    try {
+        foreach ($f in $oldParts) {
+            $suffix = $f.Name.Substring(("ul.$oldCrc.$Serial").Length)   # ".00", ".01"...
+            $dest = Join-Path $Root ("ul.$newCrc.$Serial$suffix")
+            if (Test-Path -LiteralPath $dest) { throw "Já existe $dest." }
+            Move-Item -LiteralPath $f.FullName -Destination $dest
+            $renamed.Add([pscustomobject]@{ From = $f.FullName; To = $dest })
+        }
+    } catch {
+        foreach ($m in $renamed) {
+            Move-Item -LiteralPath $m.To -Destination $m.From -ErrorAction SilentlyContinue
+        }
+        throw
+    }
+
+    # Reescreve o ul.cfg. Update-UlCfg apagaria os pedaços do CRC antigo (que já
+    # renomeamos) — por isso ele é seguro aqui: não há mais nada com o CRC antigo.
+    Update-UlCfg -Root $Root -Name $NewName -Serial $Serial -Parts $parts -Media $media | Out-Null
+
+    return [pscustomobject]@{
+        Antigo = $entry.Nome
+        Novo   = $NewName
+        Partes = $parts
+        Crc    = $newCrc
+    }
+}
+
+function Copy-UlGame {
+    <#
+        Copia um jogo (ul.* ou DVD\*.iso) para outra unidade, preservando o formato.
+        Espelha os bytes sem remontar o ISO. Devolve os arquivos criados no destino.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string]$DestRoot,
+        [Parameter(Mandatory)][string]$Serial,
+        [scriptblock]$OnLog,
+        [scriptblock]$OnProgress,
+        [hashtable]$State
+    )
+
+    $entry = @(Read-UlEntries $SourceRoot) | Where-Object { $_.Serial -eq $Serial } | Select-Object -First 1
+    if (-not $entry) { throw "Serial $Serial não encontrado no ul.cfg de $SourceRoot." }
+
+    $destCfg = Join-Path $DestRoot 'ul.cfg'
+    if (Test-Path -LiteralPath $destCfg) {
+        $dup = @(Read-UlEntries $DestRoot) | Where-Object { $_.Serial -eq $Serial } | Select-Object -First 1
+        if ($dup) { throw "O destino já tem '$($dup.Nome)' ($Serial). Remova-o antes de copiar." }
+    }
+
+    $parts = @(Get-ChildItem $SourceRoot -Filter "ul.$($entry.Crc).$Serial.*" -File -ErrorAction SilentlyContinue |
+        Sort-Object Name)
+    if ($parts.Count -eq 0) { throw "Não encontrei os pedaços de $($entry.Nome)." }
+
+    $total = [double](($parts | Measure-Object Length -Sum).Sum)
+    $done = [double]0
+    $created = New-Object 'System.Collections.Generic.List[string]'
+    $buffer = New-Object byte[] (8MB)
+
+    try {
+        foreach ($p in $parts) {
+            Test-UlCancel $State
+            $dest = Join-Path $DestRoot $p.Name
+            $created.Add($dest)
+            $src = [IO.File]::OpenRead($p.FullName)
+            try {
+                $dst = [IO.File]::Open($dest, 'Create', 'Write', 'None')
+                try {
+                    while ($true) {
+                        Test-UlCancel $State
+                        $read = $src.Read($buffer, 0, $buffer.Length)
+                        if ($read -le 0) { break }
+                        $dst.Write($buffer, 0, $read)
+                        $done += $read
+                        if ($OnProgress) {
+                            $pct = [int][Math]::Min(100, [Math]::Floor(100 * $done / $total))
+                            & $OnProgress $pct $done $total
+                        }
+                    }
+                } finally { $dst.Dispose() }
+            } finally { $src.Dispose() }
+            Write-UlLog $OnLog 'info' ("copiado {0}" -f $p.Name)
+        }
+
+        $media = if ($entry.Media -eq 'CD') { [byte]0x12 } else { [byte]0x14 }
+        Update-UlCfg -Root $DestRoot -Name $entry.Nome -Serial $Serial -Parts $parts.Count -Media $media | Out-Null
+        if ($OnProgress) { & $OnProgress 100 $total $total }
+
+        return [pscustomobject]@{ Nome = $entry.Nome; Serial = $Serial; Arquivos = $created.ToArray(); Bytes = $total }
+    } catch {
+        foreach ($f in $created) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+        throw
+    } finally { $buffer = $null }
+}
+
+function Copy-DvdGame {
+    <#
+        Copia um ISO inteiro da pasta DVD\ para a pasta DVD\ de outra unidade.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$IsoPath,
+        [Parameter(Mandatory)][string]$DestRoot,
+        [scriptblock]$OnLog,
+        [scriptblock]$OnProgress,
+        [hashtable]$State
+    )
+
+    $iso = Get-Item -LiteralPath $IsoPath
+    $destFolder = Join-Path $DestRoot 'DVD'
+    if (-not (Test-Path -LiteralPath $destFolder)) { New-Item -ItemType Directory -Path $destFolder | Out-Null }
+    $dest = Join-Path $destFolder $iso.Name
+    if (Test-Path -LiteralPath $dest) { throw "O destino já tem $($iso.Name)." }
+
+    $total = [double]$iso.Length
+    $done = [double]0
+    $buffer = New-Object byte[] (8MB)
+    try {
+        $src = [IO.File]::OpenRead($iso.FullName)
+        try {
+            $dst = [IO.File]::Open($dest, 'Create', 'Write', 'None')
+            try {
+                while ($true) {
+                    Test-UlCancel $State
+                    $read = $src.Read($buffer, 0, $buffer.Length)
+                    if ($read -le 0) { break }
+                    $dst.Write($buffer, 0, $read)
+                    $done += $read
+                    if ($OnProgress) {
+                        $pct = [int][Math]::Min(100, [Math]::Floor(100 * $done / $total))
+                        & $OnProgress $pct $done $total
+                    }
+                }
+            } finally { $dst.Dispose() }
+        } finally { $src.Dispose() }
+    } catch {
+        Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+        throw
+    } finally { $buffer = $null }
+
+    if ((Get-Item -LiteralPath $dest).Length -ne $iso.Length) {
+        Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+        throw 'Cópia incompleta: o destino não tem o mesmo tamanho da origem.'
+    }
+    if ($OnProgress) { & $OnProgress 100 $total $total }
+    Write-UlLog $OnLog 'ok' "ISO copiado para $dest"
+    return [pscustomobject]@{ Nome = $iso.BaseName; Destino = $dest; Bytes = $iso.Length }
+}
+
+function Move-UlGame {
+    <# Move = copiar para o destino e só então apagar a origem (seguro contra falha). #>
+    param(
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string]$DestRoot,
+        [Parameter(Mandatory)][string]$Serial,
+        [scriptblock]$OnLog,
+        [scriptblock]$OnProgress,
+        [hashtable]$State
+    )
+
+    $copy = Copy-UlGame -SourceRoot $SourceRoot -DestRoot $DestRoot -Serial $Serial `
+        -OnLog $OnLog -OnProgress $OnProgress -State $State
+    Remove-UlGame -Root $SourceRoot -Serial $Serial | Out-Null
+    Write-UlLog $OnLog 'ok' "Removido da origem após mover: $($copy.Nome)"
+    return $copy
+}

@@ -1,0 +1,5 @@
+{
+  "_comentario": "Renomeie para igdb.json e preencha as credenciais para buscar fichas de jogos online (IGDB/Twitch). Veja docs/FICHA-DO-JOGO.md. Sem isso, a ficha mostra só o que é local.",
+  "client_id": "SEU_CLIENT_ID_AQUI",
+  "client_secret": "SEU_CLIENT_SECRET_AQUI"
+}

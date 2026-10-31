@@ -44,6 +44,7 @@ trap {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $repoRoot 'lib\UlFormat.ps1')
 . (Join-Path $repoRoot 'lib\GameLibrary.ps1')
+. (Join-Path $repoRoot 'lib\GameInfo.ps1')
 
 # ---------------------------------------------------------------- carregar XAML
 
@@ -60,7 +61,9 @@ $ui = @{}
     'StatusText', 'BusyDot', 'Toasts', 'Overlay', 'ConfirmTitle', 'ConfirmText', 'BtnCancelConfirm',
     'BtnYesConfirm', 'BtnMin', 'BtnMax', 'BtnClose', 'VersionText', 'LibWarn',
     'TabOpl', 'TabLibrary', 'LibraryInfo', 'OplView', 'LibraryView', 'LibraryPanel',
-    'BtnHelp', 'BtnHelpClose', 'BtnSound', 'HelpOverlay', 'HelpPanel'
+    'BtnInstallSelected',
+    'BtnHelp', 'BtnHelpClose', 'BtnSound', 'HelpOverlay', 'HelpPanel',
+    'InfoOverlay', 'InfoTitle', 'InfoStatus', 'InfoPanel', 'BtnInfoClose'
 ) | ForEach-Object { $ui[$_] = $win.FindName($_) }
 
 # ---------------------------------------------------------------- estado
@@ -94,6 +97,7 @@ $S = @{
     InstalledMap = @{}          # serial -> letra da unidade onde o jogo já está instalado
     AutoInstall = $true         # soltar o jogo já inicia a instalação
     Extract    = $null          # extração de .zip/.rar/.7z em andamento
+    Info       = $null          # busca da ficha do jogo (metadados) em andamento
     ExtractQueue = New-Object System.Collections.ArrayList
     TempRoots  = New-Object System.Collections.ArrayList
     ResultUntil = [datetime]::MinValue   # mantém o resultado da cópia na barra por alguns segundos
@@ -102,6 +106,11 @@ $S = @{
     Snd        = @{}            # nome -> SoundPlayer
     HoverKey   = $null          # último elemento que recebeu hover (evita som repetido)
     HoverAt    = [datetime]::MinValue
+    Selected   = @{}            # serial (ou nome do ISO) -> $true nos cards marcados
+    LastPick   = $null          # chave do último card clicado (âncora do Shift+clique)
+    CardChecks = @{}            # chave do jogo -> CheckBox do card
+    CardBorders = @{}           # chave do jogo -> Border (realce) do card
+    LibSel     = @{}            # chave de linha da biblioteca -> $true (instalação em lote)
 }
 
 $BRUSH = @{}
@@ -253,7 +262,8 @@ function Render-Help {
     Add-HelpRow $p 'DVD\' 'pasta com o ISO inteiro, sem dividir. O OPL lê direto — prático para jogos pequenos; não precisa de ul.cfg.'
     Add-HelpRow $p 'ZIP / RAR / 7Z' 'jogo compactado. O app lê só o índice para listar e extrai na hora de instalar — nada é descompactado só para mostrar a lista.'
     Add-HelpRow $p 'CUE + BIN' 'par de um jogo de PS1 (o .cue é a capa que aponta para os dados). O mesmo vale para CCD+IMG e MDS+MDF. O app mostra uma linha só, sem duplicar.'
-    Add-HelpRow $p 'ARQUIVO' 'compactado que o app não conseguiu abrir (senha, corrompido ou sem descompactador). O botão avisa o motivo.' '#FF5555'
+    Add-HelpRow $p 'CHD' 'imagem comprimida (Compressed Hunks of Data), criada para o MAME e usada por emuladores para encolher ISOs de DVD/CD. Não é formato do OPL: para rodar no PS2 precisa virar ISO antes.'
+    Add-HelpRow $p 'ELF' 'executável nativo do PS2 (homebrew). Não é imagem de jogo; roda a partir do memory card, HD ou rede — não é instalado pelo app.'
 
     Add-HelpSection $p 'COLUNAS DA LISTA'
     Add-HelpRow $p 'MODO' 'mídia original do jogo, gravada no ul.cfg: DVD (jogo em DVD) ou CD (jogo em CD). O OPL usa isso para montar a imagem. Em DVD\ a coluna mostra ISO.'
@@ -271,6 +281,7 @@ function Render-Help {
 
     Add-HelpSection $p 'O QUE O APP IGNORA'
     Add-HelpRow $p 'ARQUIVOS QUE NÃO SÃO JOGO' 'README.md, .txt, .nfo, saves pequenos e qualquer arquivo com extensão de jogo mas conteúdo de texto ficam de fora. O app confere tamanho e conteúdo, não só o nome.' '#FFB86C'
+    Add-HelpRow $p 'COMPACTADO SEM JOGO' 'um .zip/.rar/.7z que não tem jogo dentro — ou que o app não consegue abrir (senha, corrompido, driver, programa) — não entra na lista. Só aparece compactado que dá para conferir que é jogo.' '#FFB86C'
     Add-HelpRow $p 'PASTAS DO SISTEMA' '$RECYCLE.BIN, System Volume Information, .git, node_modules, ART, CFG, CHT, LNG, THM, VMC.' '#FFB86C'
 
     Add-HelpSection $p 'PLATAFORMAS'
@@ -430,6 +441,168 @@ function Hide-Confirm {
     $S.Confirm = $null
 }
 
+# ---------------------------------------------------------------- ficha do jogo
+
+function New-InfoLine {
+    param(
+        [string]$Icon,
+        [string]$Text,
+        [string]$Color = '#E8E8E8',
+        [bool]$Strong = $false,
+        [double]$Size = 12
+    )
+    $row = New-Object Windows.Controls.StackPanel
+    $row.Orientation = 'Horizontal'
+    $row.Margin = New-Object Windows.Thickness(0, 0, 0, 6)
+
+    $ic = New-Object Windows.Controls.TextBlock
+    $ic.Text = $Icon
+    $ic.Width = 26
+    $ic.VerticalAlignment = 'Top'
+    $ic.TextWrapping = 'NoWrap'
+    [void]$row.Children.Add($ic)
+
+    $tb = New-Object Windows.Controls.TextBlock
+    $tb.Text = $Text
+    $tb.TextWrapping = 'Wrap'
+    $tb.Foreground = Br $Color
+    $tb.FontSize = $Size
+    if ($Strong) { $tb.FontWeight = 'Bold' }
+    [void]$row.Children.Add($tb)
+
+    return $row
+}
+
+function Clear-GameInfo {
+    $ui.InfoPanel.Children.Clear()
+}
+
+function Add-GameInfoLocal {
+    <#  O que o app já sabe, sem internet: serial, mídia, partes, formato.  #>
+    param($Game)
+
+    $title = if ($Game.Nome) { $Game.Nome } else { 'Jogo' }
+    $ui.InfoTitle.Text = ('FICHA — ' + $title.ToUpper())
+    [void]$ui.InfoPanel.Children.Add((New-InfoLine '🎮' $title '#8BE9FD' $true 15))
+
+    if ($Game.Serial) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '🔢' ('Serial: ' + $Game.Serial) '#C8C8C8')) }
+    if ($Game.Modo) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '📀' ('Mídia: ' + $Game.Modo) '#C8C8C8')) }
+    if ($Game.Partes) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '🔗' ('Partes: ' + $Game.Partes) '#C8C8C8')) }
+    if ($Game.Crc) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '🔐' ('CRC: ' + $Game.Crc) '#C8C8C8')) }
+    if ($Game.Tipo) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '📁' ('Formato: ' + $Game.Tipo) '#C8C8C8')) }
+}
+
+function Show-GameInfo {
+    <#
+        Abre a ficha do jogo. Mostra o que é local na hora e, se houver
+        credenciais do IGDB, busca o resto em segundo plano (não trava a janela).
+    #>
+    param($Game)
+
+    Clear-GameInfo
+    Add-GameInfoLocal -Game $Game
+
+    $hasOnline = $false
+    try { $hasOnline = Test-GameInfoOnline } catch { $hasOnline = $false }
+
+    if (-not $hasOnline) {
+        if (-not (Test-Path -LiteralPath (Join-Path (Get-GameInfoDataDir) 'games.json'))) {
+            [void]$ui.InfoPanel.Children.Add((New-InfoLine '💡' 'Sem ficha extra. Para puxar sinopse e data de lançamento, configure o IGDB (veja docs) ou preencha data\games.json.' '#F1FA8C' $false 11))
+        }
+        $ui.InfoStatus.Text = 'LOCAL'
+        $ui.InfoOverlay.Visibility = 'Visible'
+        return
+    }
+
+    # 1) tenta local/cache primeiro — se veio, nem vai na internet
+    $local = $null
+    try { $local = Get-GameInfo -Serial $Game.Serial -Nome $Game.Nome -Offline } catch { }
+    if ($local) {
+        Render-GameInfoExtra $local
+        $ui.InfoStatus.Text = 'PRONTO'
+        $ui.InfoOverlay.Visibility = 'Visible'
+        return
+    }
+
+    # 2) busca online em segundo plano
+    $ui.InfoStatus.Text = 'BUSCANDO...'
+    $ui.InfoOverlay.Visibility = 'Visible'
+
+    $sync = [hashtable]::Synchronized(@{
+            Serial = [string]$Game.Serial
+            Nome   = [string]$Game.Nome
+            Info   = $null
+            Done   = $false
+        })
+
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.ApartmentState = 'STA'
+    $rs.Open()
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript({
+            param($Sync, $InfoPath)
+            . $InfoPath
+            try {
+                $Sync.Info = Get-GameInfo -Serial $Sync.Serial -Nome $Sync.Nome
+            } catch { $Sync.Info = $null }
+            $Sync.Done = $true
+        })
+    [void]$ps.AddParameter('Sync', $sync)
+    [void]$ps.AddParameter('InfoPath', (Join-Path $repoRoot 'lib\GameInfo.ps1'))
+
+    $S.Info = [pscustomobject]@{
+        Sync       = $sync
+        PowerShell = $ps
+        Handle     = $ps.BeginInvoke()
+        Timer      = $null
+    }
+
+    $timer = New-Object Windows.Threading.DispatcherTimer
+    $timer.Interval = [TimeSpan]::FromMilliseconds(250)
+    $timer.Add_Tick({
+            $i = $S.Info
+            if (-not $i -or -not $i.Sync.Done) { return }
+            $i.Timer.Stop()
+            try { $i.PowerShell.Dispose() } catch { }
+            $S.Info = $null
+            if ($i.Sync.Info) {
+                Render-GameInfoExtra $i.Sync.Info
+                $ui.InfoStatus.Text = 'PRONTO'
+            } else {
+                $ui.InfoStatus.Text = 'SEM FICHA'
+                [void]$ui.InfoPanel.Children.Add((New-InfoLine '🔎' 'Não achei essa ficha online. Confira o serial ou tente de novo.' '#F1FA8C' $false 11))
+            }
+        })
+    $S.Info.Timer = $timer
+    $timer.Start()
+}
+
+function Render-GameInfoExtra {
+    param($Info)
+    if (-not $Info) { return }
+
+    if ($Info.Titulo -and $ui.InfoTitle) {
+        $ui.InfoTitle.Text = ('FICHA — ' + ([string]$Info.Titulo).ToUpper())
+    }
+
+    if ($Info.Lancamento) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '📅' ('Lançamento: ' + $Info.Lancamento) '#E8E8E8')) }
+    if ($Info.Genero) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '🏷️' ('Gênero: ' + $Info.Genero) '#E8E8E8')) }
+    if ($Info.Desenvolvedora) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '🏢' ('Desenvolvedora: ' + $Info.Desenvolvedora) '#E8E8E8')) }
+    if ($Info.Publicadora) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '📢' ('Publicadora: ' + $Info.Publicadora) '#E8E8E8')) }
+    if ($Info.Nota) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '⭐' ('Nota: ' + $Info.Nota) '#E8E8E8')) }
+    if ($Info.Sinopse) {
+        [void]$ui.InfoPanel.Children.Add((New-InfoLine '📝' '' '#C8C8C8'))
+        $s = New-Object Windows.Controls.TextBlock
+        $s.Text = [string]$Info.Sinopse
+        $s.TextWrapping = 'Wrap'
+        $s.Foreground = Br '#C8C8C8'
+        $s.Margin = New-Object Windows.Thickness(26, 0, 0, 8)
+        [void]$ui.InfoPanel.Children.Add($s)
+    }
+    if ($Info.Origem) { [void]$ui.InfoPanel.Children.Add((New-InfoLine '🌐' ('Fonte: ' + $Info.Origem) '#6272A4' $false 10)) }
+}
+
 # ---------------------------------------------------------------- drives
 
 function Get-DiskHardware {
@@ -584,9 +757,9 @@ function Update-DriveChips {
         $chip.Tag = $d.Letter
         $chip.IsChecked = ($d.Letter -eq $S.Drive)
         $chip.Content = ('{0}: {1}' -f $d.Letter, $d.Kind)
-        $chip.ToolTip = ('{0}: {1}`n{2}{3} · {4}`n{5} livres de {6}' -f
+        $chip.ToolTip = ('{0}: {1}`n{2}{3}`n{4} livres de {5}' -f
             $d.Letter, $d.Kind,
-            $(if ($d.Model) { $d.Model + ' · ' } else { '' }), $d.Format, $d.Label,
+            $(if ($d.Format) { $d.Format + ' · ' } else { '' }), $d.Label,
             (Format-Size $d.Free), (Format-Size $d.Total))
         $chip.Add_Click({
             param($sender, $e)
@@ -693,12 +866,10 @@ function Update-Space {
 
     $d = $S.Drives | Where-Object { $_.Letter -eq $S.Drive } | Select-Object -First 1
     $kind = if ($d) { $d.Kind } else { 'UNIDADE' }
-    $model = if ($d) { $d.Model } else { '' }
     $fmt = if ($d) { $d.Format } else { '' }
     $label = if ($d) { $d.Label } else { '' }
 
     $parts = @("$($S.Drive): $kind")
-    if ($model) { $parts += $model }
     if ($fmt) { $parts += $fmt }
     if ($label) { $parts += $label }
     $ui.DeviceName.Text = ($parts -join ' · ')
@@ -798,6 +969,67 @@ function Add-IsoFile {
     Render-Files
 }
 
+function Get-FormatTooltip {
+    param([string]$Extension)
+    
+    $ext = $Extension.ToLower()
+    
+    switch -Regex ($ext) {
+        '^\.iso$' { return '📀 ISO - Imagem de disco de PlayStation 2 (raramente PS1). Cópia fiel do DVD/CD do jogo. É o formato que o app instala no pendrive: divide em ul.* e registra no ul.cfg.' }
+        '^\.zip$' { return '🗜 ZIP - Arquivo compactado. O app abre e extrai o ISO (ou ul.*) de dentro dele para instalar. Suporta ZIP padrão e ZIP multipart (.z01, .z02...).' }
+        '^\.rar$' { return '🗜 RAR - Arquivo compactado (WinRAR). O app abre e extrai o ISO de dentro dele para instalar.' }
+        '^\.7z$' { return '🗜 7Z - Arquivo compactado (7-Zip). O app abre e extrai o ISO de dentro dele para instalar.' }
+        '^\.ul\..*$' { return '🔗 UL.* - Formato do OPL USB. É o próprio ISO já dividido em pedaços de 1 GiB (limite do FAT32) e indexado no ul.cfg. Já está pronto para o console: não precisa reinstalar.' }
+        '^\.bin$|^\.cue$|^\.img$|^\.ccd$|^\.mds$|^\.mdf$' { return '📼 BIN/CUE/IMG - Imagem de CD (PS1, Saturno, Mega-CD). O .bin guarda os dados do disco e o .cue/.ccd/.mds descreve as faixas. Fora do escopo do OPL USB, que usa ISO de PS2.' }
+        '^\.chd$' { return '🗜 CHD - Compressed Hunks of Data. Formato de imagem comprimida criado para o MAME e usado por emuladores para encolher ISOs de DVD/CD. NÃO é uma imagem de CD avulsa nem um formato do OPL: para jogar no PS2 ele precisa ser reconvertido para ISO.' }
+        '^\.elf$' { return '⚙️ ELF - Executável nativo do PlayStation 2 (também usado para homebrew/OPL). Não é uma imagem de jogo; roda a partir do MC, HD ou rede no console.' }
+        '^\.gcm$|^\.gcz$' { return '🎮 GCM/GCZ - Imagem de disco de GameCube (.gcz é a versão comprimida). Não é do PS2 nem do OPL; roda em emuladores como o Dolphin.' }
+        '^\.pbp$' { return '🎮 PBP - PlayStation Portable (PSP). Imagem compactada específica para PSP.' }
+        '^\.nds$' { return '🎮 NDS - Nintendo DS. Jogo de DS que funciona em emuladores como DeSmuME.' }
+        '^\.gba$' { return '🎮 GBA - Game Boy Advance. Jogo portátil da Nintendo.' }
+        '^\.sfc$|^\.smc$' { return '🎮 SFC/SMC - Super Nintendo (SNES). Jogo clássico de 16-bit.' }
+        '^\.n64$|^\.v64$|^\.z64$' { return '🎮 N64/V64/Z64 - Nintendo 64. Jogo de 64-bit da Nintendo.' }
+        '^\.md$|^\.gen$' { return '🎮 MD/GEN - Sega Genesis/Mega Drive. Jogo clássico da Sega de 16-bit.' }
+        '^\.nes$|^\.fds$' { return '🎮 NES/FDS - Nintendo Entertainment System. Jogo clássico de 8-bit.' }
+        default { return "📄 $Extension - Tipo de arquivo não reconhecido automaticamente como jogo." }
+    }
+}
+
+function Get-StatusTooltip {
+    param([string]$Status)
+    
+    switch ($Status) {
+        'OK' { return '✅ Arquivo válido - Pronto para instalar no OPL USB' }
+        'JÁ' { return '📋 Jogo já está instalado - Este jogo já aparece no menu do OPL. Instalar novamente substituirá a cópia existente.' }
+        'ERR' { return '❌ Arquivo inválido - ISO corrompido, formato não suportado ou ausência do SYSTEM.CNF necessário para identificar o jogo PS2.' }
+        'INSTALADO' { return '✅ Já no OPL - Já aparece no menu do console e está pronto para jogar.' }
+        'JÁ NO OPL' { return '📋 Cópia detectada - Este arquivo é uma cópia do mesmo jogo já instalado em ul.*.' }
+        'JÁ NO PENDRIVE' { return '📋 Disponível em outra unidade - Já está instalado em outro pendrive, não precisa instalar novamente.' }
+        'INSTALAR' { return '⬇️ Disponível para instalação - Clique para adicionar à fila de instalação no pendrive selecionado.' }
+        default { return '📊 Status do jogo na biblioteca.' }
+    }
+}
+
+function Get-PlatformTooltip {
+    param([string]$Platform)
+    
+    switch ($Platform.ToUpper()) {
+        'PS2' { return '🎮 PlayStation 2 - Executa no OPL. Jogos de PS2 podem ser instalados no pendrive.' }
+        'PS1' { return '🎮 PlayStation 1 - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'SNES' { return '🎮 Super Nintendo - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'N64' { return '🎮 Nintendo 64 - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'GBA' { return '🎮 Game Boy Advance - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'NDS' { return '🎮 Nintendo DS - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'GC' { return '🎮 GameCube - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'MEGA' { return '🎮 Sega Mega Drive/Genesis - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'MASTER' { return '🎮 Sega Master System - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'NES' { return '🎮 Nintendo Entertainment System - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'PSP' { return '🎮 PlayStation Portable - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        'DC' { return '🎮 Sega Dreamcast - Não executa no OPL. Apenas para consulta na biblioteca.' }
+        default { return "🎮 $Platform - Plataforma de jogo na biblioteca." }
+    }
+}
+
 function Render-Files {
     $ui.FilesPanel.Children.Clear()
 
@@ -861,6 +1093,13 @@ function Render-Files {
         }
         $meta.TextTrimming = 'CharacterEllipsis'
         [void]$stack.Children.Add($meta)
+        
+        # Tooltip explicativo do formato do arquivo
+        $formatTip = Get-FormatTooltip ([System.IO.Path]::GetExtension($f.Name))
+        if ($formatTip) {
+            $stack.ToolTip = $formatTip
+        }
+        
         [void]$grid.Children.Add($stack)
 
         $tag = New-Object Windows.Controls.TextBlock
@@ -879,6 +1118,7 @@ function Render-Files {
         $tag.VerticalAlignment = 'Center'
         $tag.HorizontalAlignment = 'Right'
         $tag.Margin = New-Object Windows.Thickness(0, 0, 8, 0)
+        $tag.ToolTip = Get-StatusTooltip $tag.Text
         [Windows.Controls.Grid]::SetColumn($tag, 1)
         [void]$grid.Children.Add($tag)
 
@@ -898,6 +1138,49 @@ function Render-Files {
         [void]$grid.Children.Add($del)
 
         $border.Child = $grid
+        
+        # Menu de contexto (clique direito)
+        $border.Tag = $f
+        $contextMenu = New-Object Windows.Controls.ContextMenu
+        
+        $itemInstall = New-Object Windows.Controls.MenuItem
+        $itemInstall.Header = 'Instalar'
+        $itemInstall.Tag = $f
+        $itemInstall.Add_Click({
+            param($sender, $e)
+            $file = $sender.Tag
+            if ($file.Valid -and $S.Drive) {
+                Start-Install
+            } elseif (-not $S.Drive) {
+                Show-Toast 'Sem pendrive' 'Conecte o pendrive para instalar.' 'warn'
+            }
+        })
+        [void]$contextMenu.Items.Add($itemInstall)
+        
+        $itemRemove = New-Object Windows.Controls.MenuItem
+        $itemRemove.Header = 'Remover da lista'
+        $itemRemove.Tag = $f
+        $itemRemove.Add_Click({
+            param($sender, $e)
+            $S.Files.Remove($sender.Tag) | Out-Null
+            Render-Files
+        })
+        [void]$contextMenu.Items.Add($itemRemove)
+        
+        $border.ContextMenu = $contextMenu
+        
+        # Duplo clique para instalar. Border não expõe MouseDoubleClick (é um
+        # Decorator, não um Control), então escutamos o MouseLeftButtonDown
+        # roteado e checamos ClickCount = 2.
+        $border.AddHandler([Windows.Controls.Border]::MouseLeftButtonDownEvent, [Windows.Input.MouseButtonEventHandler]{
+            param($sender, $e)
+            if ($e.ClickCount -ne 2) { return }
+            $file = $sender.Tag
+            if ($file.Valid -and $S.Drive) {
+                Start-Install
+            }
+        })
+
         [void]$ui.FilesPanel.Children.Add($border)
     }
 }
@@ -1051,6 +1334,7 @@ function Start-NextExtract {
     $ui.Bar.Value = 0
     $ui.BarPct.Text = ''
     $ui.BarText.Text = 'EXTRAINDO...'
+    $ui.Bar.IsIndeterminate = $true
     Set-Status 'EXTRAINDO...' '#F1FA8C'
     Add-Log ("Extraindo {0}..." -f (Split-Path $job.Archive -Leaf)) 'info'
 
@@ -1069,6 +1353,7 @@ function Update-Extract {
     $x.Timer.Stop()
     try { $x.PowerShell.Dispose() } catch { }
     $S.Extract = $null
+    $ui.Bar.IsIndeterminate = $false
 
     if ($x.Sync.Ok) {
         $isos = @($x.Sync.Isos)
@@ -1201,9 +1486,415 @@ function Show-AddFilesDialog {
 
 # ---------------------------------------------------------------- jogos
 
+function Get-GameKey {
+    <# Chave estável de um card: serial quando existe, senão o nome do arquivo. #>
+    param($Game)
+    if ($null -eq $Game) { return $null }
+    if ($Game.Serial -and $Game.Serial -ne '—') { return "ul:$($Game.Serial)" }
+    return "dvd:$($Game.Nome)"
+}
+
+function Get-GameCheck {
+    <# Checkbox do card (guardado em $S.CardChecks) para manter a marcação em sincronia. #>
+    param($Game)
+    $k = Get-GameKey $Game
+    if ($S.CardChecks.ContainsKey($k)) { return $S.CardChecks[$k] }
+    return $null
+}
+
+function Test-GameSelected {
+    param($Game)
+    return [bool]$S.Selected[(Get-GameKey $Game)]
+}
+
+function Set-GameSelected {
+    <# Marca/desmarca um card e sincroniza o checkbox e o realce visual. #>
+    param($Game, [bool]$On, $Border)
+
+    $key = Get-GameKey $Game
+    if (-not $key) { return }
+    if ($On) { $S.Selected[$key] = $true } else { $S.Selected.Remove($key) }
+
+    $check = Get-GameCheck $Game
+    if ($check) { $check.IsChecked = $On }
+
+    $b = $Border
+    if (-not $b -and $S.CardBorders.ContainsKey($key)) { $b = $S.CardBorders[$key] }
+    if ($b) {
+        $b.Background = Br $(if ($On) { '#1A1030' } else { '#000000' })
+        $b.BorderBrush = Br $(if ($On) { '#8A2BE2' } else { '#161616' })
+    }
+    Update-GamesSelectionInfo
+}
+
+function Clear-GameSelection {
+    $S.Selected = @{}
+    $S.LastPick = $null
+    foreach ($chk in @($S.CardChecks.Values)) { if ($chk) { $chk.IsChecked = $false } }
+    foreach ($b in @($S.CardBorders.Values)) {
+        if ($b) {
+            $b.Background = Br '#000000'
+            $b.BorderBrush = Br '#161616'
+        }
+    }
+    Update-GamesSelectionInfo
+}
+
+function Get-SelectedGames {
+    return @($S.Games | Where-Object { Test-GameSelected $_ })
+}
+
+# ------------------------------------------------- seleção em lote (biblioteca)
+
+function Get-LibraryKey {
+    <# Chave estável de uma linha da biblioteca: caminho relativo quando é um
+       arquivo solto; senão serial/nome da entrada instalada. #>
+    param($Row)
+    if ($null -eq $Row) { return $null }
+    if ($Row.File) { return "file:$($Row.Rel)" }
+    return "lib:$($Row.Label)$($Row.Name)"
+}
+
+function Get-SelectableLibraryRows {
+    <# Linhas que aceitam instalação: PS2, ainda não instaladas e com arquivo. #>
+    return @(Get-LibraryRows | Where-Object {
+        $_.Status -eq 'pending' -and $_.Platform -eq 'PS2' -and $_.File
+    })
+}
+
+function Test-LibrarySelected {
+    param($Row)
+    return [bool]$S.LibSel[(Get-LibraryKey $Row)]
+}
+
+function Set-LibrarySelected {
+    param($Row, [bool]$On)
+    $key = Get-LibraryKey $Row
+    if (-not $key) { return }
+    if ($On) { $S.LibSel[$key] = $true } else { $S.LibSel.Remove($key) }
+    Update-LibrarySelectionInfo
+}
+
+function Clear-LibrarySelection {
+    $S.LibSel = @{}
+    Update-LibrarySelectionInfo
+}
+
+function Get-SelectedLibraryRows {
+    return @(Get-SelectableLibraryRows | Where-Object { Test-LibrarySelected $_ })
+}
+
+function Update-LibrarySelectionInfo {
+    $n = $S.LibSel.Count
+    if ($n -le 0) {
+        $ui.BtnInstallSelected.Visibility = [Windows.Visibility]::Collapsed
+        $ui.LibraryInfo.Text = Get-LibraryInfoText
+        return
+    }
+    $bytes = [double]0
+    foreach ($r in (Get-SelectedLibraryRows)) { $bytes += [double]$r.Size }
+    $ui.BtnInstallSelected.Content = ("INSTALAR {0} SELECIONADO(S) · {1}" -f $n, (Format-Size $bytes))
+    $ui.BtnInstallSelected.Visibility = [Windows.Visibility]::Visible
+    $base = Get-LibraryInfoText
+    $ui.LibraryInfo.Text = if ($base) { ("{0} · {1} SELECIONADO(S)" -f $base, $n) } else { ("{0} SELECIONADO(S)" -f $n) }
+}
+
+function Install-SelectedLibraryGames {
+    <# Instala em lote o que estiver marcado na biblioteca. #>
+    if ($S.Busy) { Show-Toast 'Ocupado' 'Já existe uma instalação em andamento.' 'warn'; return }
+    if (-not $S.Drive) { Show-Toast 'Sem pendrive' 'Selecione uma unidade acima.' 'error'; return }
+
+    $rows = @(Get-SelectedLibraryRows)
+    if ($rows.Count -eq 0) { Show-Toast 'Nada selecionado' 'Marque os jogos que quer instalar.' 'warn'; return }
+
+    $S.Files.Clear()
+    $added = 0
+    foreach ($r in $rows) {
+        $before = $S.Files.Count
+        if ($r.Container) {
+            Add-DroppedFiles -Files @($r.File) -Auto
+        } else {
+            Add-IsoFile $r.File
+        }
+        if ($S.Files.Count -gt $before) { $added += ($S.Files.Count - $before) }
+    }
+
+    if ($added -eq 0) { Show-Toast 'Nada para instalar' 'Os jogos selecionados não geraram arquivos válidos.' 'error'; return }
+
+    Set-Status ('INSTALANDO {0} JOGO(S)...' -f $added) '#8BE9FD'
+    Start-Install
+}
+
+function Get-ActionGames {
+    <# Jogos sobre os quais uma ação de menu deve incidir: a seleção inteira
+       quando o alvo faz parte dela; caso contrário, só o alvo. #>
+    param($Target)
+    if (Test-GameSelected $Target) {
+        $sel = Get-SelectedGames
+        if ($sel.Count -gt 0) { return $sel }
+    }
+    return @($Target)
+}
+
+function Update-GamesSelectionInfo {
+    $n = $S.Selected.Count
+    if ($n -le 0) {
+        # Sem seleção: restaura o status ocioso em vez de deixar o texto antigo.
+        if ($S.Drive) { Set-Status 'PRONTO' '#50FA7B' } else { Set-Status 'NENHUM DISPOSITIVO SELECIONADO' '#666666' }
+        return
+    }
+    Set-Status ("{0} JOGO(S) SELECIONADO(S)" -f $n) '#BD93F9'
+}
+
+function Get-OtherDrives {
+    <# Unidades removíveis diferentes da atual, para Mover/Copiar. #>
+    $out = @()
+    foreach ($d in @(Get-DriveList)) {
+        if ($d.Letter -and ($d.Letter -ne $S.Drive)) { $out += $d }
+    }
+    return $out
+}
+
+function Invoke-AskText {
+    <# Caixa simples de entrada de texto (usada pelo Renomear). Devolve $null se cancelar. #>
+    param([string]$Title, [string]$Prompt, [string]$Default = '')
+
+    $dlg = New-Object Windows.Window
+    $dlg.Title = $Title
+    $dlg.Width = 420
+    $dlg.Height = 190
+    $dlg.WindowStartupLocation = 'CenterOwner'
+    $dlg.Owner = $win
+    $dlg.Background = Br '#0A0A0A'
+    $dlg.WindowStyle = 'ToolWindow'
+    $dlg.ResizeMode = 'NoResize'
+
+    $outer = New-Object Windows.Controls.StackPanel
+    $outer.Margin = New-Object Windows.Thickness(18)
+
+    $lbl = New-Object Windows.Controls.TextBlock
+    $lbl.Text = $Prompt
+    $lbl.Foreground = Br '#CCCCCC'
+    $lbl.FontSize = 11
+    $lbl.TextWrapping = 'Wrap'
+    $lbl.Margin = New-Object Windows.Thickness(0, 0, 0, 10)
+    [void]$outer.Children.Add($lbl)
+
+    $box = New-Object Windows.Controls.TextBox
+    $box.Text = $Default
+    $box.Padding = New-Object Windows.Thickness(4)
+    $box.FontSize = 11
+    $box.Background = Br '#111111'
+    $box.Foreground = Br '#EEEEEE'
+    $box.CaretBrush = Br '#BD93F9'
+    $box.BorderBrush = Br '#333333'
+    [void]$outer.Children.Add($box)
+
+    $row = New-Object Windows.Controls.StackPanel
+    $row.Orientation = 'Horizontal'
+    $row.HorizontalAlignment = 'Right'
+    $row.Margin = New-Object Windows.Thickness(0, 14, 0, 0)
+
+    $ok = New-Object Windows.Controls.Button
+    $ok.Style = $win.FindResource('BtnPrimary')
+    $ok.Content = 'OK'
+    $ok.MinWidth = 90
+    $ok.Margin = New-Object Windows.Thickness(0, 0, 8, 0)
+    $ok.IsDefault = $true
+
+    $cancel = New-Object Windows.Controls.Button
+    $cancel.Style = $win.FindResource('BtnTiny')
+    $cancel.Content = 'Cancelar'
+    $cancel.MinWidth = 90
+    $cancel.IsCancel = $true
+
+    $script:askResult = $null
+    $ok.Add_Click({ param($s, $e) $script:askResult = $box.Text; $dlg.DialogResult = $true })
+    $cancel.Add_Click({ param($s, $e) $dlg.DialogResult = $false })
+
+    $dlg.Add_ContentRendered({ $box.Focus() | Out-Null; $box.SelectAll() })
+
+    [void]$row.Children.Add($ok)
+    [void]$row.Children.Add($cancel)
+    [void]$outer.Children.Add($row)
+    $dlg.Content = $outer
+
+    [void]$dlg.ShowDialog()
+    return $script:askResult
+}
+
+function Start-GameTransfer {
+    <#
+        Copia/move um ou mais jogos para outra unidade, rodando no worker
+        (mesma barra de progresso do instalar/exportar).
+    #>
+    param([string]$Op, $Games)
+
+    $Games = @($Games)
+    if ($Games.Count -eq 0) { Show-Toast 'Seleção' 'Nenhum jogo selecionado.' 'info'; return }
+    if (-not $S.Drive) { Show-Toast 'Pendrive' 'Escolha uma unidade de origem.' 'error'; return }
+
+    $others = Get-OtherDrives
+    if ($others.Count -eq 0) {
+        Show-Toast 'Unidades' 'Não há outra unidade removível disponível para receber os jogos.' 'error'
+        return
+    }
+
+    # Escolha do destino. Com uma única unidade, serve direto; com várias, pergunta.
+    $dest = $null
+    if ($others.Count -eq 1) {
+        $dest = $others[0]
+    } else {
+        $opts = @($others | ForEach-Object { "$($_.Letter): $($_.Label)" })
+        $prompt = ("Para onde {0} {1}?" -f $(if ($Op -eq 'move') { 'mover' } else { 'copiar' }), (($Games | ForEach-Object { $_.Nome }) -join ', '))
+        $pick = Show-Choice 'Escolha o destino' $prompt $opts
+        if (-not $pick) { return }
+        $idx = [array]::IndexOf($opts, $pick)
+        if ($idx -ge 0) { $dest = $others[$idx] }
+    }
+    if (-not $dest) { return }
+
+    $verb = if ($Op -eq 'move') { 'Mover' } else { 'Copiar' }
+    Show-Confirm ("$($verb.ToUpper()) JOGO(S)") ("$verb {0} jogo(s) para a unidade {1}:?`n`n{2}" -f $Games.Count, $dest.Letter, (($Games | ForEach-Object { '• ' + $_.Nome }) -join "`n")) -OnYes {
+        $jobs = New-Object System.Collections.ArrayList
+        foreach ($g in $Games) {
+            if ($g.Tipo -eq 'ul') {
+                $opName = if ($Op -eq 'move') { 'move-ul' } else { 'copy-ul' }
+                [void]$jobs.Add([pscustomobject]@{
+                    Op = $opName; Name = $g.Nome; Serial = $g.Serial
+                    SourceRoot = "$($S.Drive):\"; DestRoot = "$($dest.Letter):\"; DestLetter = $dest.Letter
+                })
+            } else {
+                $opName = if ($Op -eq 'move') { 'move-dvd' } else { 'copy-dvd' }
+                [void]$jobs.Add([pscustomobject]@{
+                    Op = $opName; Name = $g.Nome; Iso = $g.Path
+                    DestRoot = "$($dest.Letter):\"; DestLetter = $dest.Letter
+                })
+            }
+        }
+        Start-Worker $jobs
+    }
+}
+
+function Confirm-DeleteGame {
+    <# Apaga os arquivos de verdade (ul.* + entrada no ul.cfg, ou o ISO). #>
+    param($Games)
+
+    $Games = @($Games)
+    if ($Games.Count -eq 0) { return }
+    $names = ($Games | ForEach-Object { '• ' + $_.Nome }) -join "`n"
+
+    Show-Confirm 'APAGAR PERMANENTEMENTE' ("Apagar TODOS os arquivos de {0} jogo(s)?`n`n{1}`n`nIsto remove os arquivos UL.* e a entrada no ul.cfg (ou o .iso). Não tem volta." -f $Games.Count, $names) -OnYes {
+        $removed = 0
+        $errors = @()
+        foreach ($g in $Games) {
+            try {
+                if ($g.Tipo -eq 'ul') {
+                    $r = Remove-UlGame -Root "$($S.Drive):\" -Serial $g.Serial
+                    $removed += 1 + @($r).Count
+                    Add-Log ("Apagado: {0} ({1} arquivo(s))" -f $g.Nome, (1 + @($r).Count)) 'warn'
+                } elseif ($g.Tipo -eq 'dvd' -and $g.Path -and (Test-Path -LiteralPath $g.Path)) {
+                    Remove-Item -LiteralPath $g.Path -Force
+                    $removed += 1
+                    Add-Log "Apagado: $($g.Nome).iso" 'warn'
+                }
+            } catch {
+                $errors += "$($g.Nome): $($_.Exception.Message)"
+                Add-Log "Falha ao apagar $($g.Nome): $($_.Exception.Message)" 'error'
+            }
+        }
+        Clear-GameSelection
+        Load-Games
+        if ($errors.Count) {
+            Show-Toast 'Apagar' ("Não deu para apagar:`n" + ($errors -join "`n")) 'error'
+        } else {
+            Show-Toast 'Apagar' ("{0} jogo(s) apagado(s)." -f $Games.Count) 'ok'
+        }
+    }
+}
+
+function Start-RenameGame {
+    param($Game)
+
+    if ($Game.Tipo -ne 'ul') {
+        Show-Toast 'Renomear' 'Só jogos UL.* podem ser renomeados por aqui (o nome do ISO é o próprio arquivo).' 'info'
+        return
+    }
+    $new = Invoke-AskText 'Renomear jogo' ("Novo nome para:`n{0}" -f $Game.Nome) $Game.Nome
+    if (-not $new) { return }
+    $new = $new.Trim()
+    if ($new -eq $Game.Nome) { return }
+
+    try {
+        $r = Rename-UlGame -Root "$($S.Drive):\" -Serial $Game.Serial -NewName $new
+        Add-Log ("Renomeado: {0} -> {1}" -f $r.Antigo, $r.Novo) 'ok'
+        Show-Toast 'Renomear' ("Agora é:`n{0}" -f $r.Novo) 'ok'
+        Clear-GameSelection
+        Load-Games
+    } catch {
+        Show-Toast 'Renomear' $_.Exception.Message 'error'
+    }
+}
+
+function Show-Choice {
+    <# Lista de escolha simples (usada para eleger a unidade de destino). Devolve $null se cancelar. #>
+    param([string]$Title, [string]$Prompt, [array]$Options)
+
+    if (-not $Options -or $Options.Count -eq 0) { return $null }
+
+    $dlg = New-Object Windows.Window
+    $dlg.Title = $Title
+    $dlg.Width = 440
+    $dlg.SizeToContent = 'Height'
+    $dlg.WindowStartupLocation = 'CenterOwner'
+    $dlg.Owner = $win
+    $dlg.Background = Br '#0A0A0A'
+    $dlg.WindowStyle = 'ToolWindow'
+    $dlg.ResizeMode = 'NoResize'
+    $dlg.ShowInTaskbar = $false
+
+    $outer = New-Object Windows.Controls.StackPanel
+    $outer.Margin = New-Object Windows.Thickness(18)
+
+    $lbl = New-Object Windows.Controls.TextBlock
+    $lbl.Text = $Prompt
+    $lbl.Foreground = Br '#CCCCCC'
+    $lbl.FontSize = 11
+    $lbl.TextWrapping = 'Wrap'
+    $lbl.Margin = New-Object Windows.Thickness(0, 0, 0, 12)
+    [void]$outer.Children.Add($lbl)
+
+    $script:choiceResult = $null
+    foreach ($opt in $Options) {
+        $btn = New-Object Windows.Controls.Button
+        $btn.Style = $win.FindResource('BtnPrimary')
+        $btn.Content = $opt
+        $btn.HorizontalAlignment = 'Stretch'
+        $btn.Margin = New-Object Windows.Thickness(0, 0, 0, 6)
+        $btn.Tag = $opt
+        $btn.Add_Click({ param($s, $e) $script:choiceResult = $s.Tag; $dlg.DialogResult = $true })
+        [void]$outer.Children.Add($btn)
+    }
+
+    $cancel = New-Object Windows.Controls.Button
+    $cancel.Style = $win.FindResource('BtnTiny')
+    $cancel.Content = 'Cancelar'
+    $cancel.HorizontalAlignment = 'Right'
+    $cancel.Margin = New-Object Windows.Thickness(0, 6, 0, 0)
+    $cancel.IsCancel = $true
+    [void]$outer.Children.Add($cancel)
+
+    $dlg.Content = $outer
+    [void]$dlg.ShowDialog()
+    return $script:choiceResult
+}
+
 function Load-Games {
     $ui.GamesPanel.Children.Clear()
     $S.Games = @()
+    # A lista pode encolher (remover/apagar jogo): o âncora do Shift+clique não
+    # pode apontar para um índice que deixou de existir.
+    $S.LastPick = $null
 
     if (-not $S.Drive) {
         Update-Space
@@ -1255,13 +1946,19 @@ function Load-Games {
     }
 
     foreach ($g in $S.Games) {
+        $key = Get-GameKey $g
+
         $border = New-Object Windows.Controls.Border
-        $border.BorderBrush = Br '#161616'
         $border.BorderThickness = New-Object Windows.Thickness(0, 0, 0, 1)
         $border.Padding = New-Object Windows.Thickness(0, 6, 0, 6)
+        $border.Tag = $g
+        # Fundo/borda guardados para a seleção restaurar o visual ao limpar
+        $border.Background = Br '#000000'
+        $border.BorderBrush = Br '#161616'
+        $S.CardBorders[$key] = $border
 
         $grid = New-Object Windows.Controls.Grid
-        $widths = @('2.4*', '1.5*', '0.7*', '0.6*', '1.1*', 'Auto')
+        $widths = @('Auto', '2.4*', '1.5*', '0.7*', '0.6*', '1.1*', 'Auto')
         foreach ($w in $widths) {
             $c = New-Object Windows.Controls.ColumnDefinition
             if ($w.EndsWith('*')) {
@@ -1269,6 +1966,18 @@ function Load-Games {
             }
             [void]$grid.ColumnDefinitions.Add($c)
         }
+
+        # Coluna 0: caixa de seleção (marca o jogo para ações em lote)
+        $chk = New-Object Windows.Controls.CheckBox
+        $chk.VerticalAlignment = 'Center'
+        $chk.Margin = New-Object Windows.Thickness(2, 0, 10, 0)
+        $chk.Tag = $g
+        $chk.IsChecked = [bool](Test-GameSelected $g)
+        $chk.ToolTip = 'Marcar para ações em lote'
+        $chk.Add_Click({ param($sender, $e) Set-GameSelected $sender.Tag ([bool]$sender.IsChecked) })
+        [Windows.Controls.Grid]::SetColumn($chk, 0)
+        [void]$grid.Children.Add($chk)
+        $S.CardChecks[$key] = $chk
 
         $cells = @(
             @{ Text = $g.Nome;   Color = '#CCCCCC'; Bold = $true },
@@ -1287,14 +1996,14 @@ function Load-Games {
             $t.VerticalAlignment = 'Center'
             $t.Margin = New-Object Windows.Thickness(0, 0, 6, 0)
             if ($cells[$i].Bold) { $t.FontWeight = 'Bold' }
-            [Windows.Controls.Grid]::SetColumn($t, $i)
+            [Windows.Controls.Grid]::SetColumn($t, $i + 1)
             [void]$grid.Children.Add($t)
         }
 
         $actions = New-Object Windows.Controls.StackPanel
         $actions.Orientation = 'Horizontal'
         $actions.VerticalAlignment = 'Center'
-        [Windows.Controls.Grid]::SetColumn($actions, 5)
+        [Windows.Controls.Grid]::SetColumn($actions, 6)
         [void]$grid.Children.Add($actions)
 
         if ($g.Tipo -eq 'ul') {
@@ -1319,11 +2028,109 @@ function Load-Games {
         [void]$actions.Children.Add($d)
 
         $border.Child = $grid
-        $border.Add_MouseEnter({ param($sender, $e) $sender.Background = Br '#0D0D0D' })
-        $border.Add_MouseLeave({ param($sender, $e) $sender.Background = Br '#000000' })
+
+        # Menu de contexto (clique direito). As ações que mexem em vários jogos
+        # operam sobre a seleção quando o jogo clicado faz parte dela.
+        $contextMenu = New-Object Windows.Controls.ContextMenu
+
+        $itemInfo = New-Object Windows.Controls.MenuItem
+        $itemInfo.Header = 'ℹ️ Informações'
+        $itemInfo.Tag = $g
+        $itemInfo.Add_Click({ param($sender, $e) Show-GameInfo $sender.Tag })
+        [void]$contextMenu.Items.Add($itemInfo)
+
+        if ($g.Tipo -eq 'ul') {
+            $itemExport = New-Object Windows.Controls.MenuItem
+            $itemExport.Header = '📀 Exportar ISO'
+            $itemExport.Tag = $g
+            $itemExport.Add_Click({ param($sender, $e) Start-Export $sender.Tag })
+            [void]$contextMenu.Items.Add($itemExport)
+
+            $itemRename = New-Object Windows.Controls.MenuItem
+            $itemRename.Header = '✏️ Renomear'
+            $itemRename.Tag = $g
+            $itemRename.Add_Click({ param($sender, $e) Start-RenameGame $sender.Tag })
+            [void]$contextMenu.Items.Add($itemRename)
+        }
+
+        $contextMenu.Items.Add((New-Object Windows.Controls.Separator))
+
+        $itemMove = New-Object Windows.Controls.MenuItem
+        $itemMove.Header = '➡️ Mover para…'
+        $itemMove.Tag = $g
+        $itemMove.Add_Click({ param($sender, $e) Start-GameTransfer -Op 'move' -Games (Get-ActionGames $sender.Tag) })
+        [void]$contextMenu.Items.Add($itemMove)
+
+        $itemCopy = New-Object Windows.Controls.MenuItem
+        $itemCopy.Header = '📋 Copiar para…'
+        $itemCopy.Tag = $g
+        $itemCopy.Add_Click({ param($sender, $e) Start-GameTransfer -Op 'copy' -Games (Get-ActionGames $sender.Tag) })
+        [void]$contextMenu.Items.Add($itemCopy)
+
+        $contextMenu.Items.Add((New-Object Windows.Controls.Separator))
+
+        $itemRemove = New-Object Windows.Controls.MenuItem
+        $itemRemove.Header = '🗑️ Remover do pendrive'
+        $itemRemove.Tag = $g
+        $itemRemove.Add_Click({ param($sender, $e) Confirm-Remove $sender.Tag })
+        [void]$contextMenu.Items.Add($itemRemove)
+
+        $itemDelete = New-Object Windows.Controls.MenuItem
+        $itemDelete.Header = '💥 Apagar permanentemente'
+        $itemDelete.Tag = $g
+        $itemDelete.Add_Click({ param($sender, $e) Confirm-DeleteGame (Get-ActionGames $sender.Tag) })
+        [void]$contextMenu.Items.Add($itemDelete)
+
+        $border.ContextMenu = $contextMenu
+
+        # Clique esquerdo = seleção. Ctrl alterna, Shift pega o intervalo; sem
+        # modificador, seleciona só este (igual explorador de arquivos).
+        $border.Add_MouseLeftButtonUp({
+            param($sender, $e)
+            $game = $sender.Tag
+            $mods = [Windows.Input.Keyboard]::Modifiers
+            $ctrl = [bool]($mods -band [Windows.Input.ModifierKeys]::Control)
+            $shift = [bool]($mods -band [Windows.Input.ModifierKeys]::Shift)
+            $k = Get-GameKey $game
+
+            $idx = $S.Games.IndexOf($game)
+            if ($shift -and $null -ne $S.LastPick -and $S.LastPick -lt $S.Games.Count) {
+                $lo = [Math]::Max(0, [Math]::Min($S.LastPick, $idx))
+                $hi = [Math]::Min($S.Games.Count - 1, [Math]::Max($S.LastPick, $idx))
+                Clear-GameSelection
+                for ($n = $lo; $n -le $hi; $n++) {
+                    if ($null -ne $S.Games[$n]) { Set-GameSelected $S.Games[$n] $true }
+                }
+                $S.LastPick = $idx
+            } elseif ($ctrl) {
+                Set-GameSelected $game (-not (Test-GameSelected $game))
+                $S.LastPick = $idx
+            } else {
+                Clear-GameSelection
+                Set-GameSelected $game $true
+                $S.LastPick = $idx
+            }
+            Update-GamesSelectionInfo
+            $e.Handled = $true
+        })
+        $border.Add_MouseRightButtonUp({
+            param($sender, $e)
+            # Clique direito sobre um item não selecionado: seleciona só ele,
+            # para o menu agir no alvo intuitivo.
+            $game = $sender.Tag
+            if (-not (Test-GameSelected $game)) {
+                Clear-GameSelection
+                Set-GameSelected $game $true
+                $S.LastPick = $S.Games.IndexOf($game)
+                Update-GamesSelectionInfo
+            }
+        })
+        $border.Add_MouseEnter({ param($sender, $e) if (-not (Test-GameSelected $sender.Tag)) { $sender.Background = Br '#0D0D0D' } })
+        $border.Add_MouseLeave({ param($sender, $e) if (-not (Test-GameSelected $sender.Tag)) { $sender.Background = Br '#000000' } })
         [void]$ui.GamesPanel.Children.Add($border)
     }
 
+    Update-GamesSelectionInfo
     Update-Space
     Update-OplInfo
 }
@@ -1419,6 +2226,7 @@ function Start-LibraryScan {
     $S.LibLetter = $letter
     $S.Lib = @()
     $S.LibReport = $null
+    Clear-LibrarySelection
     if ($S.LibView -eq 'library') { $ui.LibraryInfo.Text = 'VARRENDO...' }
     Show-LibraryMessage ('PROCURANDO JOGOS EM {0}:...' -f $letter) '#8BE9FD'
 
@@ -1625,6 +2433,20 @@ function Update-LibFilters {
     }
 }
 
+function Get-LibraryInfoText {
+    <# Resumo do cabeçalho da aba Jogos. #>
+    if ($S.LibView -ne 'library') { return '' }
+    $c = $S.LibCounts
+    if (-not $c) { return '' }
+
+    $info = ('{0} JOGO(S) · {1} INSTALADO(S)' -f $c.all, $c.installed)
+    if ($c.elsewhere -gt 0) { $info += (' · {0} NO PENDRIVE' -f $c.elsewhere) }
+    $info += (' · {0} PARA INSTALAR' -f $c.pending)
+    if ($c.other -gt 0) { $info += (' · {0} OUTRO(S)' -f $c.other) }
+    if ($S.LibReport -and $S.LibReport.Truncated) { $info = 'MOSTRANDO ' + $info }
+    return $info
+}
+
 function Render-Library {
     $ui.LibraryPanel.Children.Clear()
 
@@ -1657,18 +2479,13 @@ function Render-Library {
         if (-not $S.Drive) {
             Show-LibraryMessage 'SELECIONE UMA UNIDADE'
         } else {
-            Show-LibraryMessage ("NENHUM JOGO ENCONTRADO EM {0}:`n`nO app só lista arquivos que são jogos de verdade (tamanho e conteúdo conferidos).`nFormatos: PS2 .iso · PS1 .bin/.cue/.chd · SNES .sfc · N64 .n64`nGBA .gba · NDS .nds · GC .gcm · Mega .md — e .zip/.rar/.7z" -f $S.Drive)
+            Show-LibraryMessage ("NENHUM JOGO ENCONTRADO EM {0}:`n`nO app só lista arquivos que são jogos de verdade (tamanho e conteúdo conferidos).`nFormatos: PS2 .iso · PS1 .bin/.cue · SNES .sfc · N64 .n64`nGBA .gba · NDS .nds · GC .gcm · Mega .md — e .zip/.rar/.7z" -f $S.Drive)
         }
         return
     }
 
     if ($S.LibView -eq 'library') {
-        $info = ('{0} JOGO(S) · {1} INSTALADO(S)' -f $all.Count, $counts.installed)
-        if ($counts.elsewhere -gt 0) { $info += (' · {0} NO PENDRIVE' -f $counts.elsewhere) }
-        $info += (' · {0} PARA INSTALAR' -f $counts.pending)
-        if ($counts.other -gt 0) { $info += (' · {0} OUTRO(S)' -f $counts.other) }
-        if ($S.LibReport -and $S.LibReport.Truncated) { $info = 'MOSTRANDO ' + $info }
-        $ui.LibraryInfo.Text = $info
+        $ui.LibraryInfo.Text = Get-LibraryInfoText
     }
 
     $rows = switch ($S.LibFilter) {
@@ -1699,7 +2516,12 @@ function Render-Library {
         $border.Tag = $r
 
         if ($r.File) {
-            $border.ToolTip = ('{0} · {1}`n{2}`n{3}' -f $r.Label, $r.Name, $r.Rel, $r.File)
+            $formatTip = Get-FormatTooltip ([System.IO.Path]::GetExtension($r.File))
+            if ($formatTip) {
+                $border.ToolTip = ('{0} · {1}`n{2}`n{3}`n`n{4}' -f $r.Label, $r.Name, $r.Rel, $r.File, $formatTip)
+            } else {
+                $border.ToolTip = ('{0} · {1}`n{2}`n{3}' -f $r.Label, $r.Name, $r.Rel, $r.File)
+            }
         } else {
             $border.ToolTip = ('{0} · {1}`n{2}' -f $r.Label, $r.Name, $r.Rel)
         }
@@ -1722,20 +2544,56 @@ function Render-Library {
         $c3.Width = [Windows.GridLength]::Auto
         [void]$grid.ColumnDefinitions.Add($c3)
 
-        # plataforma
+        # caixa de seleção (só para jogos que podem ser instalados)
+        $selectable = ($r.Status -eq 'pending' -and $r.Platform -eq 'PS2' -and $r.File)
+        if ($selectable) {
+            $cChk = New-Object Windows.Controls.ColumnDefinition
+            $cChk.Width = [Windows.GridLength]::Auto
+            [void]$grid.ColumnDefinitions.Insert(0, $cChk)
+
+            $chk = New-Object Windows.Controls.CheckBox
+            $chk.VerticalAlignment = 'Center'
+            $chk.Margin = New-Object Windows.Thickness(0, 0, 8, 0)
+            $chk.IsChecked = (Test-LibrarySelected $r)
+            $chk.Tag = $r
+            $chk.ToolTip = 'Marque para instalar em lote'
+            $chk.add_Click({
+                $row = $this.Tag
+                Set-LibrarySelected $row ([bool]$this.IsChecked)
+                $b = $this.Parent
+                while ($b -and -not ($b -is [Windows.Controls.Border])) { $b = $b.Parent }
+                if ($b) {
+                    $b.BorderBrush = Br $(if ($this.IsChecked) { '#2A1A44' } else { '#161616' })
+                }
+            })
+            [Windows.Controls.Grid]::SetColumn($chk, 0)
+            [void]$grid.Children.Add($chk)
+        } else {
+            $cPad = New-Object Windows.Controls.ColumnDefinition
+            $cPad.Width = [Windows.GridLength]::Auto
+            [void]$grid.ColumnDefinitions.Insert(0, $cPad)
+            $pad = New-Object Windows.Controls.Border
+            $pad.Width = 14
+            $pad.Margin = New-Object Windows.Thickness(0, 0, 8, 0)
+            [Windows.Controls.Grid]::SetColumn($pad, 0)
+            [void]$grid.Children.Add($pad)
+        }
+
+        # plataforma (deslocada para a coluna 1)
         $badge = New-Object Windows.Controls.Border
         $badge.BorderBrush = Br (Get-PlatformColor $r.Platform)
         $badge.BorderThickness = New-Object Windows.Thickness(1)
         $badge.Padding = New-Object Windows.Thickness(4, 1, 4, 1)
         $badge.HorizontalAlignment = 'Left'
         $badge.VerticalAlignment = 'Center'
+        $badge.ToolTip = Get-PlatformTooltip $r.Platform
         $bt = New-Object Windows.Controls.TextBlock
         $bt.Text = $r.Label
         $bt.Foreground = Br (Get-PlatformColor $r.Platform)
         $bt.FontSize = 9
         $bt.FontWeight = 'Bold'
         $badge.Child = $bt
-        [Windows.Controls.Grid]::SetColumn($badge, 0)
+        [Windows.Controls.Grid]::SetColumn($badge, 1)
         [void]$grid.Children.Add($badge)
 
         # nome + caminho
@@ -1758,7 +2616,7 @@ function Render-Library {
         $rel.TextTrimming = 'CharacterEllipsis'
         [void]$stack.Children.Add($rel)
 
-        [Windows.Controls.Grid]::SetColumn($stack, 1)
+        [Windows.Controls.Grid]::SetColumn($stack, 2)
         [void]$grid.Children.Add($stack)
 
         # tamanho
@@ -1769,7 +2627,7 @@ function Render-Library {
         $sz.VerticalAlignment = 'Center'
         $sz.HorizontalAlignment = 'Right'
         $sz.Margin = New-Object Windows.Thickness(0, 0, 10, 0)
-        [Windows.Controls.Grid]::SetColumn($sz, 2)
+        [Windows.Controls.Grid]::SetColumn($sz, 3)
         [void]$grid.Children.Add($sz)
 
         # status / ação: INSTALADO (já no OPL), JÁ NO OPL (cópia),
@@ -1811,10 +2669,128 @@ function Render-Library {
             $act.VerticalAlignment = 'Center'
         }
         $act.Margin = New-Object Windows.Thickness(0, 0, 10, 0)
-        [Windows.Controls.Grid]::SetColumn($act, 3)
+        [Windows.Controls.Grid]::SetColumn($act, 4)
         [void]$grid.Children.Add($act)
 
         $border.Child = $grid
+        
+        # Menu de contexto (clique direito) expandido
+        $contextMenu = New-Object Windows.Controls.ContextMenu
+        
+        if ($r.Status -eq 'pending' -and $r.File) {
+            $itemInstall = New-Object Windows.Controls.MenuItem
+            $itemInstall.Header = '▶ Instalar'
+            $itemInstall.Tag = $r
+            $itemInstall.Add_Click({ param($sender, $e) Add-LibraryGame $sender.Tag })
+            [void]$contextMenu.Items.Add($itemInstall)
+            
+            $contextMenu.Items.Add((New-Object Windows.Controls.Separator))
+        }
+        
+        if ($r.File -and (Test-Path -LiteralPath $r.File -ErrorAction SilentlyContinue)) {
+            $itemOpen = New-Object Windows.Controls.MenuItem
+            $itemOpen.Header = '📂 Abrir local'
+            $itemOpen.Tag = $r
+            $itemOpen.Add_Click({
+                param($sender, $e)
+                $item = $sender.Tag
+                if ($item.File) {
+                    $parent = Split-Path -Parent $item.File
+                    if (Test-Path -LiteralPath $parent) {
+                        Start-Process 'explorer.exe' -ArgumentList $parent
+                    }
+                }
+            })
+            [void]$contextMenu.Items.Add($itemOpen)
+            
+            $itemCopy = New-Object Windows.Controls.MenuItem
+            $itemCopy.Header = '📋 Copiar'
+            $itemCopy.Tag = $r
+            $itemCopy.Add_Click({
+                param($sender, $e)
+                $item = $sender.Tag
+                if ($item.File) {
+                    try {
+                        Set-Clipboard -Value $item.File
+                        Show-Toast 'Copiado' 'Caminho copiado para a área de transferência' 'ok'
+                    } catch { }
+                }
+            })
+            [void]$contextMenu.Items.Add($itemCopy)
+            
+            $itemMove = New-Object Windows.Controls.MenuItem
+            $itemMove.Header = '➡ Mover'
+            $itemMove.Tag = $r
+            $itemMove.Add_Click({
+                param($sender, $e)
+                $item = $sender.Tag
+                Show-Toast 'Funcionalidade' 'Ação de mover será implementada em breve' 'info'
+            })
+            [void]$contextMenu.Items.Add($itemMove)
+            
+            $itemDelete = New-Object Windows.Controls.MenuItem
+            $itemDelete.Header = '🗑 Apagar'
+            $itemDelete.Tag = $r
+            $itemDelete.Add_Click({
+                param($sender, $e)
+                $item = $sender.Tag
+                Show-Confirm 'APAGAR ARQUIVO' ("Tem certeza que deseja apagar:`n`n{0}`n`nEsta ação não pode ser desfeita." -f $item.File) -OnYes {
+                    try {
+                        if (Test-Path -LiteralPath $item.File) {
+                            Remove-Item -LiteralPath $item.File -Force
+                            Show-Toast 'Arquivo apagado' $item.Name 'ok'
+                            Refresh-Library
+                        }
+                    } catch {
+                        Show-Toast 'Erro ao apagar' $_.Exception.Message 'error'
+                    }
+                }
+            })
+            [void]$contextMenu.Items.Add($itemDelete)
+            
+            $itemCut = New-Object Windows.Controls.MenuItem
+            $itemCut.Header = '✂ Recortar'
+            $itemCut.Tag = $r
+            $itemCut.Add_Click({
+                param($sender, $e)
+                $item = $sender.Tag
+                Show-Toast 'Funcionalidade' 'Ação de recortar será implementada em breve' 'info'
+            })
+            [void]$contextMenu.Items.Add($itemCut)
+            
+            $contextMenu.Items.Add((New-Object Windows.Controls.Separator))
+        }
+        
+        $itemProps = New-Object Windows.Controls.MenuItem
+        $itemProps.Header = '⚙ Propriedades'
+        $itemProps.Tag = $r
+        $itemProps.Add_Click({
+            param($sender, $e)
+            $item = $sender.Tag
+            $details = '📱 {0} · {1}' -f $item.Label, $item.Name
+            if ($item.Serial) { $details += "`n🔢 Serial: " + $item.Serial }
+            if ($item.SizeText) { $details += "`n📊 Tamanho: " + $item.SizeText }
+            if ($item.File) { $details += "`n📁 Arquivo: " + $item.File }
+            if ($item.Rel) { $details += "`n📂 Caminho: " + $item.Rel }
+            if ($item.Status) { $details += "`n📈 Status: " + $item.Status }
+            if ($item.Platform) { $details += "`n🎮 Plataforma: " + $item.Platform }
+            Show-Toast 'Propriedades' $details 'ok'
+        })
+        [void]$contextMenu.Items.Add($itemProps)
+        
+        $border.ContextMenu = $contextMenu
+        
+        # Duplo clique para instalar (se pending). Border é Decorator: sem
+        # MouseDoubleClick, então usamos o evento roteado + ClickCount.
+        $border.AddHandler([Windows.Controls.Border]::MouseLeftButtonDownEvent, [Windows.Input.MouseButtonEventHandler]{
+            param($sender, $e)
+            if ($e.ClickCount -ne 2) { return }
+            $item = $sender.Tag
+            if ($item.Status -eq 'pending' -and $item.File) {
+                Add-LibraryGame $item
+            }
+        })
+
         $border.Add_MouseEnter({ param($sender, $e) $sender.Background = Br '#0D0D0D' })
         $border.Add_MouseLeave({ param($sender, $e) $sender.Background = Br '#000000' })
         [void]$ui.LibraryPanel.Children.Add($border)
@@ -1933,6 +2909,7 @@ function Start-Worker {
     $ui.Bar.Value = 0
     $ui.BarPct.Text = '0%'
     $ui.BarText.Text = 'INICIANDO...'
+    $ui.Bar.IsIndeterminate = $true
 
     $timer = New-Object Windows.Threading.DispatcherTimer
     $timer.Interval = [TimeSpan]::FromMilliseconds(120)
@@ -1976,6 +2953,7 @@ function Update-Worker {
     if ($sync.Finished) {
         $S.Timer.Stop()
         $S.Timer = $null
+        $ui.Bar.IsIndeterminate = $false
 
         try { if ($S.PowerShell) { $S.PowerShell.Dispose() } } catch { }
         $S.PowerShell = $null
@@ -2211,6 +3189,7 @@ $ui.BtnMax.Add_Click({
 # glossário e som
 $ui.BtnHelp.Add_Click({ Show-Help })
 $ui.BtnHelpClose.Add_Click({ Hide-Help })
+$ui.BtnInfoClose.Add_Click({ $ui.InfoOverlay.Visibility = 'Collapsed' })
 $ui.BtnSound.Add_Click({
     $S.Sound = [bool]$ui.BtnSound.IsChecked
     $ui.BtnSound.Content = $(if ($S.Sound) { 'SOM: ON' } else { 'SOM: OFF' })
@@ -2220,6 +3199,8 @@ $ui.BtnSound.Add_Click({
 })
 
 $ui.BtnInstall.Add_Click({ Start-Install })
+
+$ui.BtnInstallSelected.Add_Click({ Install-SelectedLibraryGames })
 
 $ui.BtnRefresh.Add_MouseLeftButtonUp({
     Update-DriveChips
@@ -2314,6 +3295,11 @@ function Hide-ConfirmIfOpen {
 $win.Add_KeyDown({
     param($sender, $e)
     if ($e.Key -eq 'Escape') {
+        if ($ui.InfoOverlay.Visibility -eq 'Visible') {
+            $ui.InfoOverlay.Visibility = 'Collapsed'
+            $e.Handled = $true
+            return
+        }
         if ($ui.HelpOverlay.Visibility -eq 'Visible') {
             Hide-Help
             $e.Handled = $true
